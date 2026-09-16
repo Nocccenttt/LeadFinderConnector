@@ -51,3 +51,6 @@ codex_handoffs/TEST/
 
 # Batch execution logs
 batch_runs/
+
+# Client runtime status files
+codex_handoffs/**/STATUS.json
