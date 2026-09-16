@@ -1,0 +1,16 @@
+# API Keys / Secrets
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Generated outputs
+outputs/
+logs/
+
+# Generated websites
+website/
+
+# AI generated reports
+quality_report.json
