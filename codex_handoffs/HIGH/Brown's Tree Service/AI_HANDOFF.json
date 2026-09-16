@@ -1,0 +1,51 @@
+{
+  "handoff_version": "1.0",
+  "source": "LeadFinder",
+  "source_of_truth": "business.json",
+  "lead": {
+    "priority": "",
+    "opportunity_score": 90,
+    "opportunity": "HIGH",
+    "reason": "",
+    "opportunity_reasons": "broken website"
+  },
+  "business": {
+    "name": "",
+    "address": "5104 Yachtsman Ct, Raleigh, NC 27615, USA",
+    "phone": "(919) 845-6222",
+    "website": "http://www.brownstreeserviceofraleigh.com/",
+    "website_status": "broken"
+  },
+  "verified_online_presence": {
+    "facebook": "",
+    "instagram": "",
+    "linkedin": "",
+    "other_socials": "",
+    "email": "",
+    "email_source_url": ""
+  },
+  "website_build": {
+    "objective": "Create a modern, mobile-first local business website using only verified information contained in this handoff.",
+    "requirements": [
+      "Use the business name exactly as provided.",
+      "Preserve verified contact information.",
+      "Preserve verified website information.",
+      "Use the LeadFinder opportunity to guide website strategy.",
+      "Make the website clear, professional, and conversion-focused.",
+      "Make the website mobile-first and responsive.",
+      "Use only information supported by the source data."
+    ],
+    "do_not_invent": [
+      "services",
+      "reviews",
+      "certifications",
+      "awards",
+      "years in business",
+      "guarantees",
+      "locations",
+      "pricing",
+      "business claims"
+    ],
+    "unsupported_information": "If information is not present in the source data, omit it rather than guessing."
+  }
+}

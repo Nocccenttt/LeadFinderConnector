@@ -1,0 +1,34 @@
+{
+  "handoff_version": "1.0",
+  "source": "LeadFinder",
+  "priority": "",
+  "opportunity_score": 0,
+  "business": {
+    "name": "",
+    "address": "1210 W Clay St #26, Houston, TX 77019, USA",
+    "phone": "(713) 999-4661",
+    "website": "https://gobrandnation.com/",
+    "website_status": "working"
+  },
+  "website_opportunity": {
+    "opportunity": "LOW",
+    "reason": "",
+    "opportunity_reasons": "no major issues detected"
+  },
+  "instructions": {
+    "objective": "Create a modern, mobile-first local business website based only on verified information in this handoff.",
+    "source_of_truth": "business.json",
+    "do_not_invent": [
+      "services",
+      "reviews",
+      "certifications",
+      "awards",
+      "years in business",
+      "guarantees",
+      "locations",
+      "pricing",
+      "business claims"
+    ],
+    "preserve_verified_information": true
+  }
+}

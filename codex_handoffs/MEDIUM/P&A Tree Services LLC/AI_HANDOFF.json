@@ -1,0 +1,51 @@
+{
+  "handoff_version": "1.0",
+  "source": "LeadFinder",
+  "source_of_truth": "business.json",
+  "lead": {
+    "priority": "",
+    "opportunity_score": 15,
+    "opportunity": "MEDIUM",
+    "reason": "",
+    "opportunity_reasons": "weak/no CTA"
+  },
+  "business": {
+    "name": "",
+    "address": "2728 Watkins Town Rd, Raleigh, NC 27616, USA",
+    "phone": "(984) 397-5596",
+    "website": "https://p-and-a-treeservices.com/",
+    "website_status": "working"
+  },
+  "verified_online_presence": {
+    "facebook": "",
+    "instagram": "",
+    "linkedin": "",
+    "other_socials": "",
+    "email": "p.and.a.treeservices@gmail.com",
+    "email_source_url": ""
+  },
+  "website_build": {
+    "objective": "Create a modern, mobile-first local business website using only verified information contained in this handoff.",
+    "requirements": [
+      "Use the business name exactly as provided.",
+      "Preserve verified contact information.",
+      "Preserve verified website information.",
+      "Use the LeadFinder opportunity to guide website strategy.",
+      "Make the website clear, professional, and conversion-focused.",
+      "Make the website mobile-first and responsive.",
+      "Use only information supported by the source data."
+    ],
+    "do_not_invent": [
+      "services",
+      "reviews",
+      "certifications",
+      "awards",
+      "years in business",
+      "guarantees",
+      "locations",
+      "pricing",
+      "business claims"
+    ],
+    "unsupported_information": "If information is not present in the source data, omit it rather than guessing."
+  }
+}
