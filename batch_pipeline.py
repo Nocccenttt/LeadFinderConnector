@@ -2,9 +2,15 @@ from pathlib import Path
 import argparse
 
 from pipeline_runner import run_pipeline
+from batch_logger import BatchLogger
+from status_manager import (
+    save_status,
+    is_completed,
+)
 
 
 ROOT = Path("codex_handoffs")
+
 PRIORITIES = [
     "HIGH",
     "MEDIUM",
@@ -22,15 +28,19 @@ def discover_clients():
         if not folder.exists():
             continue
 
+
         for client in folder.iterdir():
 
             if not client.is_dir():
                 continue
 
+
             handoff = client / "AI_HANDOFF.json"
+
 
             if handoff.exists():
                 clients.append(client)
+
 
     return clients
 
@@ -54,16 +64,21 @@ def run_dry_run(clients):
     print(
         f"Total clients: {len(clients)}"
     )
+
     print(
         "No API calls made."
     )
+
     print("============================")
 
 
 
-def run_batch(clients):
+def run_batch(clients, resume=False):
+
+    logger = BatchLogger()
 
     processed = 0
+    skipped = 0
     failed = 0
 
 
@@ -73,6 +88,19 @@ def run_batch(clients):
 
 
     for client in clients:
+
+
+        if resume and is_completed(client):
+
+            print(
+                f"⏭ Skipping {client.name}: Already completed"
+            )
+
+            skipped += 1
+
+            continue
+
+
 
         print("\n----------------------------")
         print(
@@ -85,18 +113,47 @@ def run_batch(clients):
 
             run_pipeline(client)
 
+
+            save_status(
+                client,
+                "PASS"
+            )
+
+
+            logger.add_completed(
+                client
+            )
+
+
             processed += 1
+
 
 
         except Exception as error:
 
-            failed += 1
 
-            print(
-                f"FAILED {client.name}"
+            save_status(
+                client,
+                "FAILED"
             )
 
-            print(error)
+
+            logger.add_failed(
+                client,
+                error
+            )
+
+
+            failed += 1
+
+
+            print(
+                f"FAILED {client.name}: {error}"
+            )
+
+
+
+    run_folder = logger.save()
 
 
 
@@ -104,13 +161,23 @@ def run_batch(clients):
     print("FINAL RESULT")
     print("============================")
 
+
     print(
         f"Completed: {processed}"
     )
 
     print(
+        f"Skipped: {skipped}"
+    )
+
+    print(
         f"Failed: {failed}"
     )
+
+    print(
+        f"Log saved: {run_folder}"
+    )
+
 
     print("============================")
 
@@ -126,14 +193,23 @@ def main():
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="List clients without generating websites"
+        help="Show clients without generating websites"
+    )
+
+
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip completed clients"
     )
 
 
     args = parser.parse_args()
 
 
+
     clients = discover_clients()
+
 
 
     if not clients:
@@ -155,7 +231,8 @@ def main():
     else:
 
         run_batch(
-            clients
+            clients,
+            resume=args.resume
         )
 
 
