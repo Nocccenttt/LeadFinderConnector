@@ -1,16 +1,53 @@
-# API Keys / Secrets
+# ==========================
+# Secrets
+# ==========================
+
 .env
 
-# Python cache
+
+# ==========================
+# Python
+# ==========================
+
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 
-# Generated outputs
-outputs/
+
+# ==========================
+# Logs
+# ==========================
+
 logs/
 
-# Generated websites
-website/
 
-# AI generated reports
-quality_report.json
+# ==========================
+# LeadFinder Generated Data
+# ==========================
+
+outputs/
+
+
+# ==========================
+# Generated Websites
+# ==========================
+
+codex_handoffs/**/website/
+
+
+# ==========================
+# Generated AI Reports
+# ==========================
+
+codex_handoffs/**/quality_report.json
+
+
+# ==========================
+# Temporary Testing
+# ==========================
+
+codex_handoffs/TEST/
+
+# Batch execution logs
+batch_runs/

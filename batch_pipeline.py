@@ -1,80 +1,108 @@
 from pathlib import Path
+import argparse
 
 from pipeline_runner import run_pipeline
 
 
-def main():
+ROOT = Path("codex_handoffs")
+PRIORITIES = [
+    "HIGH",
+    "MEDIUM",
+]
 
-    root = Path("codex_handoffs")
 
-    processed = 0
-    failed = 0
+def discover_clients():
 
+    clients = []
 
-    for priority in [
-        "HIGH",
-        "MEDIUM"
-    ]:
+    for priority in PRIORITIES:
 
-        folder = root / priority
+        folder = ROOT / priority
 
         if not folder.exists():
             continue
-
 
         for client in folder.iterdir():
 
             if not client.is_dir():
                 continue
 
+            handoff = client / "AI_HANDOFF.json"
 
-            handoff = (
-                client /
-                "AI_HANDOFF.json"
-            )
+            if handoff.exists():
+                clients.append(client)
 
-
-            if not handoff.exists():
-                print(
-                    f"Skipping {client.name}: No AI_HANDOFF.json"
-                )
-                continue
+    return clients
 
 
-            print(
-                "\n============================"
-            )
 
-            print(
-                f"Processing: {client.name}"
-            )
+def run_dry_run(clients):
 
-            print(
-                "============================"
-            )
+    print("\n============================")
+    print("DRY RUN MODE")
+    print("============================\n")
 
 
-            try:
+    for client in clients:
 
-                run_pipeline(
-                    client
-                )
-
-                processed += 1
+        print(
+            f"✓ {client.name}"
+        )
 
 
-            except Exception as e:
-
-                failed += 1
-
-                print(
-                    f"FAILED {client.name}: {e}"
-                )
-
-
+    print("\n============================")
     print(
-        "\n============================"
+        f"Total clients: {len(clients)}"
     )
+    print(
+        "No API calls made."
+    )
+    print("============================")
+
+
+
+def run_batch(clients):
+
+    processed = 0
+    failed = 0
+
+
+    print("\n============================")
+    print("PRODUCTION MODE")
+    print("============================")
+
+
+    for client in clients:
+
+        print("\n----------------------------")
+        print(
+            f"Processing: {client.name}"
+        )
+        print("----------------------------")
+
+
+        try:
+
+            run_pipeline(client)
+
+            processed += 1
+
+
+        except Exception as error:
+
+            failed += 1
+
+            print(
+                f"FAILED {client.name}"
+            )
+
+            print(error)
+
+
+
+    print("\n============================")
+    print("FINAL RESULT")
+    print("============================")
 
     print(
         f"Completed: {processed}"
@@ -84,10 +112,54 @@ def main():
         f"Failed: {failed}"
     )
 
-    print(
-        "============================"
+    print("============================")
+
+
+
+def main():
+
+    parser = argparse.ArgumentParser(
+        description="LeadFinder Batch Pipeline"
     )
 
 
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List clients without generating websites"
+    )
+
+
+    args = parser.parse_args()
+
+
+    clients = discover_clients()
+
+
+    if not clients:
+
+        print(
+            "No AI_HANDOFF.json files found."
+        )
+
+        return
+
+
+
+    if args.dry_run:
+
+        run_dry_run(
+            clients
+        )
+
+    else:
+
+        run_batch(
+            clients
+        )
+
+
+
 if __name__ == "__main__":
+
     main()
