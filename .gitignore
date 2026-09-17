@@ -54,3 +54,6 @@ batch_runs/
 
 # Client runtime status files
 codex_handoffs/**/STATUS.json
+
+# Generated client handoffs
+codex_handoffs/
