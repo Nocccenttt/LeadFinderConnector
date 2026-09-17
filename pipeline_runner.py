@@ -5,6 +5,7 @@ from deepseek_website_generator import generate_website
 from website_validator import validate
 from status_manager import save_status
 from delivery_manager import create_delivery_json
+from sales_generator import generate_sales_package
 
 
 def run_pipeline(client_folder):
@@ -59,7 +60,7 @@ def run_pipeline(client_folder):
 
     report = validate(
     client_folder
-     )
+)
 
 
     print(
@@ -112,6 +113,14 @@ def run_pipeline(client_folder):
         print(
             f"Delivery file created: {delivery}"
         )
+
+    sales_package = generate_sales_package(
+        client_folder
+    )
+
+    print(
+        f"Sales package created: {sales_package}"
+    )
 
 
     print("\n========== FINAL RESULT ==========")
