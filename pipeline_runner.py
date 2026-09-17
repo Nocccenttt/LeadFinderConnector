@@ -1,100 +1,160 @@
 import argparse
-import json
 from pathlib import Path
 
-from website_validator import validate
 from deepseek_website_generator import generate_website
+from website_validator import validate
+from status_manager import save_status
+from delivery_manager import create_delivery_json
 
 
 def run_pipeline(client_folder):
 
     client_folder = Path(client_folder)
 
-    handoff = client_folder / "AI_HANDOFF.json"
+    print("\n============================")
+    print(f"Client: {client_folder.name}")
+    print("============================")
 
-    if not handoff.exists():
+
+    # ----------------------------
+    # Step 1: Find AI HANDOFF
+    # ----------------------------
+
+    ai_handoff = (
+        client_folder /
+        "AI_HANDOFF.json"
+    )
+
+
+    if not ai_handoff.exists():
+
         raise FileNotFoundError(
-            f"Missing AI_HANDOFF.json: {handoff}"
+            "AI_HANDOFF.json not found"
         )
+
 
     print("\n🚀 Starting website generation...")
 
-    website = generate_website(
-        handoff
+
+    # ----------------------------
+    # Step 2: Generate Website
+    # ----------------------------
+
+    website_dir = generate_website(
+        ai_handoff
     )
 
+
     print(
-        f"✅ Website created: {website}"
+        f"Website created: {website_dir}"
     )
+
+
+    # ----------------------------
+    # Step 3: Validate Website
+    # ----------------------------
 
     print("\n🔍 Running quality validation...")
 
-    report_path = validate(
-        client_folder
-    )
+
+    report = validate(
+    client_folder
+     )
+
 
     print(
-        f"✅ QA Report created: {report_path}"
+        "Validation complete"
     )
 
 
-    # Reload fresh report after validation
-    with report_path.open(
-        "r",
-        encoding="utf-8"
-    ) as file:
-        report = json.load(file)
+    # ----------------------------
+    # Step 4: Check Validation
+    # ----------------------------
+
+    status = "PASS"
+
+
+    if isinstance(report, dict):
+
+        if report.get("status") == "FAIL":
+
+            status = "FAILED"
+
+
+
+    # ----------------------------
+    # Step 5: Save STATUS
+    # ----------------------------
+
+    save_status(
+        client_folder,
+        status
+    )
+
+
+    print(
+        f"STATUS.json created: {status}"
+    )
+
+
+
+    # ----------------------------
+    # Step 6: Create DELIVERY.json
+    # ----------------------------
+
+    if status == "PASS":
+
+        delivery = create_delivery_json(
+            client_folder
+        )
+
+
+        print(
+            f"Delivery file created: {delivery}"
+        )
 
 
     print("\n========== FINAL RESULT ==========")
 
     print(
-        f"Client: {report.get('client', 'UNKNOWN')}"
+        f"Client: {client_folder.name}"
     )
 
     print(
-        f"Status: {report.get('status', 'UNKNOWN')}"
+        f"Status: {status}"
+    )
+
+    print(
+        "=================================\n"
     )
 
 
-    if report.get("warnings"):
-
-        print("\nWarnings:")
-
-        for warning in report["warnings"]:
-            print(
-                f"- {warning}"
-            )
+    return status
 
 
-    if report.get("checks"):
 
-        print("\nChecks:")
-
-        for check, result in report["checks"].items():
-            print(
-                f"{check}: {result}"
-            )
-
-
-    print("\n=================================")
-
-
-if __name__ == "__main__":
+def main():
 
     parser = argparse.ArgumentParser(
-        description=
-        "Run LeadFinder website pipeline"
+        description="Run LeadFinder client pipeline"
     )
+
 
     parser.add_argument(
         "client_folder",
-        help=
-        "Path to client folder"
+        help="Path to client folder"
     )
 
+
     args = parser.parse_args()
+
 
     run_pipeline(
         args.client_folder
     )
+
+
+
+if __name__ == "__main__":
+
+    main()
