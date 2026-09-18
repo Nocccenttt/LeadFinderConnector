@@ -1,10 +1,13 @@
-import argparse
 import json
 import os
+import argparse
 from pathlib import Path
 
 from dotenv import load_dotenv
 from openai import OpenAI
+
+from api_usage_logger import log_usage
+
 
 load_dotenv()
 
@@ -12,31 +15,54 @@ load_dotenv()
 MODEL = "deepseek-chat"
 
 
+
 def load_handoff(path):
+
     path = Path(path)
 
-    with path.open("r", encoding="utf-8") as f:
+    with path.open(
+        "r",
+        encoding="utf-8"
+    ) as f:
+
         return json.load(f)
 
 
-def generate_website(handoff_path):
-    handoff_path = Path(handoff_path)
-    handoff = load_handoff(handoff_path)
 
-    api_key = os.getenv("DEEPSEEK_API_KEY")
+def generate_website(handoff_path):
+
+    handoff_path = Path(handoff_path)
+
+    handoff = load_handoff(
+        handoff_path
+    )
+
+
+    api_key = os.getenv(
+        "DEEPSEEK_API_KEY"
+    )
+
 
     if not api_key:
+
         raise RuntimeError(
             "DEEPSEEK_API_KEY is not set."
         )
 
+
+
     client = OpenAI(
+
         api_key=api_key,
-        base_url="https://api.deepseek.com",
+
+        base_url="https://api.deepseek.com"
+
     )
 
+
+
     system_prompt = """
-You are a professional local-business website generator.
+You are a professional local-business landing page generator.
 
 Create a complete static website from the supplied LeadFinder AI handoff.
 
@@ -44,101 +70,255 @@ IMPORTANT RULES:
 
 1. Use ONLY verified information in the handoff.
 2. Never invent services.
-3. Never invent reviews or testimonials.
-4. Never invent certifications or awards.
+3. Never invent reviews.
+4. Never invent certifications.
 5. Never invent years in business.
 6. Never invent guarantees.
-7. Never invent locations.
-8. Never invent pricing.
-9. Never invent business claims.
-10. If information is missing, omit it.
-11. Preserve the business name exactly.
-12. Preserve verified phone and address information.
-13. Create a modern, professional, mobile-first website.
-14. Make the design responsive.
-15. Use semantic HTML.
-16. Use clean CSS.
-17. Use JavaScript only when useful.
-18. Make calls to action clear without making unsupported claims.
+7. Never invent pricing.
+8. Never invent locations.
+9. If information is missing, omit it.
+10. Preserve business name exactly.
+11. Preserve verified contact details.
+12. Create a modern mobile-first landing page.
+13. Use semantic HTML.
+14. Use clean CSS.
+15. Use JavaScript only if necessary.
+
+STRICT JSON RULES:
 
 Return ONLY valid JSON.
 
 The JSON must have exactly these keys:
 
 {
-  "index.html": "...",
-  "styles.css": "...",
-  "script.js": "..."
+"index.html": "",
+"styles.css": "",
+"script.js": ""
 }
 
-Do not use Markdown code fences.
+Rules:
+
+- Escape all quotes correctly.
+- Do not use markdown.
+- Do not use code fences.
+- Do not include explanations.
+- Ensure JSON closes properly.
 """
 
+
+
     response = client.chat.completions.create(
+
         model=MODEL,
+
+        response_format={
+            "type": "json_object"
+        },
+
         messages=[
+
             {
                 "role": "system",
-                "content": system_prompt,
+                "content": system_prompt
             },
+
             {
                 "role": "user",
                 "content": json.dumps(
                     handoff,
                     indent=2,
-                    ensure_ascii=False,
-                ),
-            },
+                    ensure_ascii=False
+                )
+            }
+
         ],
-        temperature=0.7,
+
+        temperature=0.7
+
     )
 
-    content = response.choices[0].message.content.strip()
 
-    if content.startswith("```"):
-        content = content.strip("`")
 
-        if content.startswith("json"):
-            content = content[4:].strip()
+    print("\nDeepSeek Usage:")
 
-    website = json.loads(content)
+    print(
+        response.usage
+    )
+
+
+    # Save token usage
+
+    try:
+
+        log_usage(
+
+            handoff.get(
+                "business_name",
+                handoff_path.parent.name
+            ),
+
+            response.usage
+
+        )
+
+    except Exception as e:
+
+        print(
+            f"Usage logging skipped: {e}"
+        )
+
+
+
+    content = (
+
+        response
+        .choices[0]
+        .message
+        .content
+        .strip()
+
+    )
+
+
+
+    try:
+
+        website = json.loads(
+            content
+        )
+
+
+    except json.JSONDecodeError:
+
+
+        debug_file = (
+
+            handoff_path.parent /
+
+            "deepseek_raw_response.txt"
+
+        )
+
+
+        debug_file.write_text(
+
+            content,
+
+            encoding="utf-8"
+
+        )
+
+
+        raise RuntimeError(
+
+            "DeepSeek returned invalid JSON. "
+            "Check deepseek_raw_response.txt"
+
+        )
+
+
 
     required_files = (
+
         "index.html",
+
         "styles.css",
-        "script.js",
+
+        "script.js"
+
     )
 
+
+
     for filename in required_files:
+
         if filename not in website:
+
             raise ValueError(
-                f"DeepSeek response is missing {filename}"
+
+                f"Missing generated file: {filename}"
+
             )
 
-    output_dir = handoff_path.parent / "website"
-    output_dir.mkdir(exist_ok=True)
+
+
+    output_dir = (
+
+        handoff_path.parent /
+
+        "website"
+
+    )
+
+
+    output_dir.mkdir(
+
+        exist_ok=True
+
+    )
+
+
 
     for filename in required_files:
-        (output_dir / filename).write_text(
-            website[filename],
-            encoding="utf-8",
+
+
+        file_path = (
+
+            output_dir /
+
+            filename
+
         )
+
+
+        file_path.write_text(
+
+            website[filename],
+
+            encoding="utf-8"
+
+        )
+
+
 
     return output_dir
 
 
+
+
+
 if __name__ == "__main__":
+
+
     parser = argparse.ArgumentParser(
-        description="Generate a website using DeepSeek."
+
+        description="Generate website using DeepSeek"
+
     )
 
+
     parser.add_argument(
+
         "ai_handoff",
-        help="Path to AI_HANDOFF.json",
+
+        help="Path to AI_HANDOFF.json"
+
     )
+
 
     args = parser.parse_args()
 
-    output = generate_website(args.ai_handoff)
 
-    print(f"Website created: {output}")
+
+    result = generate_website(
+
+        args.ai_handoff
+
+    )
+
+
+    print(
+
+        f"\nWebsite created: {result}"
+
+    )
