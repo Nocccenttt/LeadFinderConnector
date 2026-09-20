@@ -4,7 +4,9 @@ from pathlib import Path
 from threading import Lock, Thread
 from uuid import uuid4
 
-from flask import Flask, jsonify, render_template_string, request, send_file
+from flask import Flask, jsonify, render_template_string, request, send_file, send_from_directory
+
+from pipeline_runner import run_pipeline
 
 from seo_lead_finder_prospecting_batch import run as run_lead_finder
 
@@ -368,6 +370,15 @@ select:focus {
 
 }
 
+
+.demo-grid{display:grid;grid-template-columns:300px 1fr;gap:16px}
+.demo-info{background:var(--panel-2);border:1px solid var(--border);border-radius:12px;padding:17px}
+.demo-name{font-size:20px;font-weight:900}
+.demo-meta{color:var(--muted);font-size:13px;line-height:1.6;margin-top:8px}
+.preview{height:620px;background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.preview iframe{width:100%;height:100%;border:0;background:#fff}
+@media(max-width:900px){.demo-grid{grid-template-columns:1fr}.preview{height:520px}}
+
 </style>
 
 </head>
@@ -586,6 +597,47 @@ select:focus {
 
     </section>
 
+    <section id="demo-panel" class="panel demo-panel" style="display:none">
+
+        <div class="panel-title">Landing Page Demo</div>
+
+        <div class="demo-grid">
+
+            <div class="demo-info">
+                <div id="demo-name" class="demo-name">Select a lead</div>
+                <div id="demo-meta" class="demo-meta"></div>
+                <div id="demo-status" class="status">Ready.</div>
+
+                <div class="actions">
+                    <button id="generate-demo" class="primary" type="button">
+                        GENERATE LANDING PAGE
+                    </button>
+
+                    <button id="regenerate-demo" class="secondary" type="button">
+                        REGENERATE
+                    </button>
+
+                    <button id="open-preview" class="secondary" type="button">
+                        OPEN PREVIEW
+                    </button>
+
+                    <button id="download-demo" class="secondary" type="button">
+                        DOWNLOAD LANDING PAGE
+                    </button>
+                </div>
+            </div>
+
+            <div class="preview">
+                <iframe
+                    id="preview-frame"
+                    title="Landing page preview"
+                ></iframe>
+            </div>
+
+        </div>
+
+    </section>
+
 </div>
 
 
@@ -732,7 +784,173 @@ function watchJob(jobId) {
 
                     button.disabled = false;
 
-                    await loadLeads();
+                    await 
+let selectedLead = null;
+let demoTimer = null;
+
+function selectLead(lead) {
+    selectedLead = lead;
+
+    const panel = document.getElementById("demo-panel");
+    panel.style.display = "block";
+
+    document.getElementById("demo-name").textContent =
+        lead.name || "Selected Lead";
+
+    document.getElementById("demo-meta").innerHTML =
+        escapeHtml(lead.address || "") + "<br>" +
+        escapeHtml(lead.phone || "") + "<br>" +
+        escapeHtml(lead.website || "No website");
+
+    document.getElementById("demo-status").textContent =
+        lead.demo_ready
+            ? "Landing page already exists."
+            : "Ready to generate with DeepSeek.";
+
+    document.getElementById("preview-frame").src =
+        lead.demo_url || "about:blank";
+
+    document.getElementById("generate-demo").disabled = false;
+    document.getElementById("regenerate-demo").disabled = !lead.demo_ready;
+
+    panel.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+    });
+}
+
+async function generateDemo() {
+    if (!selectedLead) return;
+
+    const generateButton =
+        document.getElementById("generate-demo");
+
+    const regenerateButton =
+        document.getElementById("regenerate-demo");
+
+    const status =
+        document.getElementById("demo-status");
+
+    generateButton.disabled = true;
+    regenerateButton.disabled = true;
+    status.textContent =
+        "DeepSeek is generating the landing page...";
+
+    try {
+        const response = await fetch(
+            "/generate-landing-page",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    priority: selectedLead.priority,
+                    name: selectedLead.name
+                })
+            }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.error || "Landing page generation failed."
+            );
+        }
+
+        watchLandingPage(data.job_id);
+
+    } catch (error) {
+        generateButton.disabled = false;
+        status.textContent = error.message;
+    }
+}
+
+function watchLandingPage(jobId) {
+    if (demoTimer) {
+        clearInterval(demoTimer);
+    }
+
+    demoTimer = setInterval(async () => {
+        try {
+            const response = await fetch(
+                "/landing-page-status?job_id=" +
+                encodeURIComponent(jobId)
+            );
+
+            const job = await response.json();
+
+            document.getElementById("demo-status").textContent =
+                job.message || "Generating...";
+
+            if (job.status === "complete") {
+                clearInterval(demoTimer);
+
+                selectedLead.demo_ready = true;
+                selectedLead.demo_url = job.preview_url;
+                selectedLead.download_url = job.download_url;
+
+                document.getElementById("generate-demo").disabled = false;
+                document.getElementById("regenerate-demo").disabled = false;
+
+                document.getElementById("preview-frame").src =
+                    job.preview_url + "?t=" + Date.now();
+
+                document.getElementById("demo-status").textContent =
+                    "Landing page ready.";
+
+                await loadLeads();
+            }
+
+            if (job.status === "error") {
+                clearInterval(demoTimer);
+
+                document.getElementById("generate-demo").disabled = false;
+
+                document.getElementById("demo-status").textContent =
+                    job.message || "Landing page generation failed.";
+            }
+
+        } catch (error) {
+            clearInterval(demoTimer);
+
+            document.getElementById("generate-demo").disabled = false;
+
+            document.getElementById("demo-status").textContent =
+                "Could not read landing-page status.";
+        }
+
+    }, 1000);
+}
+
+document.getElementById("generate-demo")
+    .addEventListener("click", generateDemo);
+
+document.getElementById("regenerate-demo")
+    .addEventListener("click", generateDemo);
+
+document.getElementById("open-preview")
+    .addEventListener("click", () => {
+        if (selectedLead && selectedLead.demo_url) {
+            window.open(
+                selectedLead.demo_url,
+                "_blank",
+                "noopener"
+            );
+        }
+    });
+
+document.getElementById("download-demo")
+    .addEventListener("click", () => {
+        if (selectedLead && selectedLead.download_url) {
+            window.location.href =
+                selectedLead.download_url;
+        }
+    });
+
+
+loadLeads();
 
                     statusBox.textContent =
                         "Lead generation complete.";
@@ -905,6 +1123,12 @@ function renderLead(lead) {
 
             <div class="actions">
                 ${website}
+                <button
+                    type="button"
+                    onclick='selectLead(${JSON.stringify(lead)})'
+                >
+                    SELECT LEAD
+                </button>
             </div>
 
         </article>
@@ -1005,6 +1229,8 @@ def discover_leads():
 
                 continue
 
+            website_dir = client_folder / "website"
+
             leads.append({
                 "name": business.get(
                     "business_name",
@@ -1033,6 +1259,18 @@ def discover_leads():
                 "reason": business.get(
                     "opportunity_reasons",
                     ""
+                ),
+                "folder": str(client_folder.relative_to(ROOT)),
+                "demo_ready": (website_dir / "index.html").exists(),
+                "demo_url": (
+                    "/demo/" + client_folder.relative_to(ROOT).as_posix()
+                    if (website_dir / "index.html").exists()
+                    else ""
+                ),
+                "download_url": (
+                    "/download-demo/" + client_folder.relative_to(ROOT).as_posix()
+                    if (website_dir / "index.html").exists()
+                    else ""
                 )
             })
 
@@ -1192,6 +1430,126 @@ def leads():
         "total": len(items),
         "leads": items
     })
+
+
+
+def resolve_client(priority, name):
+    priority = str(priority or "").upper()
+    if priority not in ("HIGH", "MEDIUM"):
+        return None
+
+    folder = HANDOFFS / priority / str(name)
+    if folder.is_dir() and (folder / "AI_HANDOFF.json").exists():
+        return folder
+
+    return None
+
+
+def run_landing_page(job_id, client_folder):
+    try:
+        with jobs_lock:
+            jobs[job_id] = {
+                "status": "running",
+                "message": "DeepSeek is generating the landing page..."
+            }
+
+        run_pipeline(client_folder)
+
+        website = client_folder / "website" / "index.html"
+        if not website.exists():
+            raise RuntimeError(
+                "Pipeline finished without creating website/index.html."
+            )
+
+        relative = client_folder.relative_to(ROOT).as_posix()
+
+        with jobs_lock:
+            jobs[job_id] = {
+                "status": "complete",
+                "message": "Landing page ready.",
+                "preview_url": "/demo/" + relative,
+                "download_url": "/download-demo/" + relative
+            }
+
+    except Exception as error:
+        with jobs_lock:
+            jobs[job_id] = {
+                "status": "error",
+                "message": str(error)
+            }
+
+
+@app.post("/generate-landing-page")
+def generate_landing_page():
+    data = request.get_json(silent=True) or {}
+
+    client_folder = resolve_client(
+        data.get("priority"),
+        data.get("name")
+    )
+
+    if not client_folder:
+        return jsonify({
+            "error": "Lead handoff not found. Generate the lead handoff first."
+        }), 404
+
+    job_id = uuid4().hex
+
+    with jobs_lock:
+        jobs[job_id] = {
+            "status": "queued",
+            "message": "Queued landing-page generation..."
+        }
+
+    Thread(
+        target=run_landing_page,
+        args=(job_id, client_folder),
+        daemon=True
+    ).start()
+
+    return jsonify({"job_id": job_id})
+
+
+@app.get("/landing-page-status")
+def landing_page_status():
+    job_id = request.args.get("job_id")
+
+    with jobs_lock:
+        job = jobs.get(job_id)
+
+    if not job:
+        return jsonify({
+            "status": "error",
+            "message": "Job not found."
+        }), 404
+
+    return jsonify(job)
+
+
+@app.get("/demo/<path:client_path>")
+def demo(client_path):
+    folder = ROOT / client_path
+    website = folder / "website"
+
+    if not (website / "index.html").exists():
+        return "Landing page not found.", 404
+
+    return send_from_directory(website, "index.html")
+
+
+@app.get("/download-demo/<path:client_path>")
+def download_demo(client_path):
+    folder = ROOT / client_path
+    website = folder / "website" / "index.html"
+
+    if not website.exists():
+        return "Landing page not found.", 404
+
+    return send_file(
+        website,
+        as_attachment=True,
+        download_name=f"{folder.name}-landing-page.html"
+    )
 
 
 @app.get("/export")
