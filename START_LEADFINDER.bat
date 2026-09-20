@@ -1,120 +1,118 @@
 @echo off
 setlocal
-
 cd /d "%~dp0"
 
 title LeadFinder
+color 0B
 
+echo ============================================
+echo             LEADFINDER
+echo ============================================
 echo.
-echo ========================================
-echo              LEADFINDER
-echo ========================================
-echo.
 
-REM ========================================
-REM CHECK PYTHON
-REM ========================================
-
+REM --------------------------------------------
+REM Check Python
+REM --------------------------------------------
 where python >nul 2>&1
 
 if errorlevel 1 (
-    echo ERROR: Python is not installed.
+    echo Python is not installed.
     echo.
-    echo Please install Python 3.11 or newer.
+    echo Please install Python 3.11 or newer from:
+    echo https://www.python.org/downloads/
     echo.
     pause
     exit /b 1
 )
 
-echo [OK] Python detected.
+echo Python found.
+python --version
+echo.
 
-REM ========================================
-REM CHECK .ENV
-REM ========================================
-
+REM --------------------------------------------
+REM Check .env
+REM --------------------------------------------
 if not exist ".env" (
-    echo.
     echo ERROR: .env file was not found.
     echo.
-    echo Please place your .env file in:
+    echo Put your .env file in this folder:
     echo %CD%
     echo.
     pause
     exit /b 1
 )
 
-echo [OK] .env detected.
+echo .env found.
+echo.
 
-REM ========================================
-REM CREATE VIRTUAL ENVIRONMENT
-REM ========================================
-
+REM --------------------------------------------
+REM Create virtual environment
+REM --------------------------------------------
 if not exist ".venv\Scripts\python.exe" (
-
-    echo.
-    echo Creating Python environment...
-    echo.
-
+    echo Creating virtual environment...
     python -m venv .venv
 
     if errorlevel 1 (
         echo.
-        echo ERROR: Could not create Python environment.
-        echo.
+        echo ERROR: Could not create virtual environment.
         pause
         exit /b 1
     )
 )
 
-echo [OK] Python environment ready.
-
-REM ========================================
-REM INSTALL REQUIRED PACKAGES
-REM ========================================
-
-echo.
-echo Installing/checking dependencies...
+echo Virtual environment ready.
 echo.
 
+REM --------------------------------------------
+REM Upgrade pip
+REM --------------------------------------------
+echo Updating pip...
 ".venv\Scripts\python.exe" -m pip install --upgrade pip
+
+REM --------------------------------------------
+REM Install required packages
+REM --------------------------------------------
+echo.
+echo Installing LeadFinder dependencies...
+echo.
 
 ".venv\Scripts\python.exe" -m pip install Flask openai python-dotenv beautifulsoup4 requests
 
 if errorlevel 1 (
     echo.
-    echo ERROR: Could not install required packages.
+    echo ERROR: Dependency installation failed.
     echo.
     pause
     exit /b 1
 )
 
 echo.
-echo [OK] Dependencies installed.
-
-REM ========================================
-REM START LEADFINDER
-REM ========================================
-
-echo.
-echo ========================================
-echo        STARTING LEADFINDER
-echo ========================================
+echo Dependencies ready.
 echo.
 
+REM --------------------------------------------
+REM Start browser
+REM --------------------------------------------
+echo Starting LeadFinder dashboard...
+echo.
 echo Dashboard:
 echo http://127.0.0.1:3000
 echo.
+echo Keep this window open while using LeadFinder.
+echo Press CTRL+C here to stop LeadFinder.
+echo.
 
-timeout /t 2 /nobreak >nul
+timeout /t 3 /nobreak >nul
 
-start "" http://127.0.0.1:3000
+start "" "http://127.0.0.1:3000"
 
+REM --------------------------------------------
+REM Start Flask
+REM --------------------------------------------
 ".venv\Scripts\python.exe" preview_dashboard.py
 
 echo.
-echo ========================================
-echo       LEADFINDER HAS STOPPED
-echo ========================================
-echo.
-
+echo ============================================
+echo LeadFinder has stopped.
+echo ============================================
 pause

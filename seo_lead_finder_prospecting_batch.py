@@ -338,7 +338,26 @@ def write_opportunity_csv(leads, path, priority):
             ])
 
 
-def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex_handoffs'):
+def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex_handoffs', progress_callback=None):
+    def progress(**event):
+        if progress_callback:
+            progress_callback(event)
+
+    progress(
+        phase="Searching",
+        subphase=f"{niche} • {area}",
+        current_business="",
+        current_index=0,
+        total=0,
+        percent=2,
+        high=0,
+        medium=0,
+        low=0,
+        message="Searching Google Places...",
+        log_type="work",
+        log="● Searching Google Places...",
+    )
+
     # If the user leaves --output at its default, create a descriptive
     # filename for this batch automatically.
     output_dir = Path(output_dir)
@@ -360,6 +379,20 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
         return
 
     print(f"[progress] Found {len(leads)} businesses. Starting website checks...", flush=True)
+    progress(
+        phase="Website analysis",
+        subphase=f"{niche} • {area}",
+        current_business="",
+        current_index=0,
+        total=len(leads),
+        percent=5,
+        high=0,
+        medium=0,
+        low=0,
+        message=f"Found {len(leads)} businesses. Starting website checks...",
+        log_type="ok",
+        log=f"✓ Found {len(leads)} businesses.",
+    )
     for number, lead in enumerate(leads, 1):
         print("", flush=True)
         print(f"[progress] ===== Lead {number}/{len(leads)} =====", flush=True)
@@ -373,6 +406,23 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
             lead.reason = f"website check failed: {exc}"
             print(f"       [warning] Website check failed: {exc}", flush=True)
         print(f"       [result] website={lead.website_status}, score={lead.opportunity_score}/100 ({lead.opportunity})", flush=True)
+        high_count = sum(x.opportunity == "HIGH" for x in leads[:number])
+        medium_count = sum(x.opportunity == "MEDIUM" for x in leads[:number])
+        low_count = sum(x.opportunity == "LOW" for x in leads[:number])
+        progress(
+            phase="Website analysis",
+            subphase=f"{niche} • {area}",
+            current_business=lead.name,
+            current_index=number,
+            total=len(leads),
+            percent=5 + int(number / len(leads) * 70),
+            high=high_count,
+            medium=medium_count,
+            low=low_count,
+            message=f"{lead.website_status.title()} • {lead.opportunity_score}/100 • {lead.opportunity}",
+            log_type="ok",
+            log=f"✓ {lead.name} — {lead.opportunity} — {lead.opportunity_score}/100",
+        )
         time.sleep(random.uniform(0.2, 0.5))
 
     # Deterministic priority buckets.
@@ -397,6 +447,20 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
         priority_dir = Path(codex_dir) / priority
         priority_dir.mkdir(parents=True, exist_ok=True)
         print(f"[progress] Preparing {len(bucket)} {priority} priority records...", flush=True)
+        progress(
+            phase="Preparing handoffs",
+            subphase=f"{priority} priority",
+            current_business="",
+            current_index=0,
+            total=len(bucket),
+            percent=75 if priority == "HIGH" else 85 if priority == "MEDIUM" else 92,
+            high=len(high_leads),
+            medium=len(medium_leads),
+            low=len(low_leads),
+            message=f"Preparing {len(bucket)} {priority} priority records...",
+            log_type="work",
+            log=f"● Preparing {len(bucket)} {priority} handoffs...",
+        )
         for lead in bucket:
             print(f"       [handoff] {priority}: {lead.name}", flush=True)
             write_codex_handoff(lead, codex_dir)
@@ -423,6 +487,20 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
                 lead.email, lead.email_source_url, lead.opportunity_score, lead.opportunity,
                 lead.reason,
             ])
+    progress(
+        phase="Complete",
+        subphase=f"{niche} • {area}",
+        current_business="",
+        current_index=len(leads),
+        total=len(leads),
+        percent=100,
+        high=len(high_leads),
+        medium=len(medium_leads),
+        low=len(low_leads),
+        message=f"Lead generation complete. {len(leads)} leads ready.",
+        log_type="ok",
+        log=f"✓ Saved {len(leads)} leads.",
+    )
     print(f"[done] Wrote {len(leads)} leads to {output}")
     print(f"[batch] {output}")
 
