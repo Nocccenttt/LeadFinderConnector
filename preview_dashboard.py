@@ -365,8 +365,8 @@ def discover_leads():
                 "reason": business.get("opportunity_reasons", ""),
                 "folder": str(client_folder.relative_to(ROOT)),
                 "demo_ready": ready,
-                "demo_url": "/demo/" + relative if ready else "",
-                "download_url": "/download-demo/" + relative if ready else "",
+                "demo_url": "/demo/" + str(business.get("opportunity", priority)).upper() + "/" + client_folder.name if ready else "",
+                "download_url": "/download-demo/" + str(business.get("opportunity", priority)).upper() + "/" + client_folder.name if ready else "",
             })
     leads.sort(key=lambda lead: (0 if lead["priority"] == "HIGH" else 1 if lead["priority"] == "MEDIUM" else 2, -int(lead["score"] or 0)))
     return leads
@@ -541,9 +541,63 @@ def landing_page_status():
     return jsonify(job)
 
 
+def get_demo_folder(priority, name):
+    """Resolve a demo using the lead priority + exact client folder name."""
+    priority = str(priority or "").upper().strip()
+    name = str(name or "").strip()
+
+    if priority not in ("HIGH", "MEDIUM", "LOW") or not name:
+        return None
+
+    folder = HANDOFFS / priority / name
+
+    if not folder.is_dir():
+        return None
+
+    website = folder / "website"
+
+    if not (website / "index.html").is_file():
+        return None
+
+    return folder
+
+
+@app.get("/demo/<priority>/<path:name>/<path:asset>")
+def demo_asset_named(priority, name, asset):
+    folder = get_demo_folder(priority, name)
+
+    if not folder:
+        return "Landing page not found.", 404
+
+    website = folder / "website"
+    file_path = (website / asset).resolve()
+    website_root = website.resolve()
+
+    if not file_path.is_file() or website_root not in file_path.parents:
+        return "Asset not found.", 404
+
+    return send_from_directory(
+        website,
+        file_path.relative_to(website_root).as_posix(),
+    )
+
+
+@app.get("/demo/<priority>/<path:name>")
+def demo_named(priority, name):
+    folder = get_demo_folder(priority, name)
+
+    if not folder:
+        return "Landing page not found.", 404
+
+    return send_from_directory(
+        folder / "website",
+        "index.html",
+    )
+
+
+# Legacy demo route retained for old dashboard links.
 @app.get("/demo/<path:client_path>/<path:asset>")
-def demo_asset(client_path, asset):
-    """Serve CSS/JS/images before the generic demo route can catch them."""
+def demo_asset_legacy(client_path, asset):
     folder = ROOT / client_path
     website = folder / "website"
 
@@ -556,34 +610,78 @@ def demo_asset(client_path, asset):
     if not file_path.is_file() or website_root not in file_path.parents:
         return "Asset not found.", 404
 
-    return send_from_directory(website, asset)
+    return send_from_directory(
+        website,
+        file_path.relative_to(website_root).as_posix(),
+    )
 
 
 @app.get("/demo/<path:client_path>")
-def demo(client_path):
+def demo_legacy(client_path):
     folder = ROOT / client_path
     website = folder / "website"
 
-    if not (website / "index.html").exists():
+    if not (website / "index.html").is_file():
         return "Landing page not found.", 404
 
     return send_from_directory(website, "index.html")
 
 
+@app.get("/download-demo/<priority>/<path:name>")
+def download_demo_named(priority, name):
+    """Download the complete landing-page package as a ZIP."""
+    import zipfile
+
+    folder = get_demo_folder(priority, name)
+
+    if not folder:
+        return "Landing page not found.", 404
+
+    website = folder / "website"
+    required = ["index.html", "styles.css", "script.js"]
+    missing = [item for item in required if not (website / item).is_file()]
+
+    if missing:
+        return (
+            "Landing page package is incomplete. Missing: "
+            + ", ".join(missing)
+        ), 500
+
+    package_dir = ROOT / "outputs" / "landing_pages"
+    package_dir.mkdir(parents=True, exist_ok=True)
+
+    zip_path = package_dir / f"{folder.name}-landing-page.zip"
+
+    with zipfile.ZipFile(
+        zip_path,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+    ) as archive:
+        for file in website.rglob("*"):
+            if file.is_file():
+                archive.write(file, file.relative_to(website))
+
+    return send_file(
+        zip_path,
+        as_attachment=True,
+        download_name=f"{folder.name}-landing-page.zip",
+        mimetype="application/zip",
+    )
+
+
+# Legacy download route retained for old dashboard links.
 @app.get("/download-demo/<path:client_path>")
-def download_demo(client_path):
-    """Download the complete landing page package, not just index.html."""
-    import tempfile
+def download_demo_legacy(client_path):
     import zipfile
 
     folder = ROOT / client_path
     website = folder / "website"
 
-    if not (website / "index.html").exists():
+    if not (website / "index.html").is_file():
         return "Landing page not found.", 404
 
     required = ["index.html", "styles.css", "script.js"]
-    missing = [name for name in required if not (website / name).is_file()]
+    missing = [item for item in required if not (website / item).is_file()]
 
     if missing:
         return (
