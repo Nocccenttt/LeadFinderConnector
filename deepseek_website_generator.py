@@ -82,7 +82,7 @@ class PageParser(HTMLParser):
             self.sections += 1
         elif tag == "img" and attrs.get("alt"):
             self.images.append(attrs["alt"][:100])
-        elif tag == "link" and "stylesheet" in attrs.get("rel", "").lower():
+        elif tag == "link" and ("stylesheet" in attrs.get("rel", "").lower() or attrs.get("as", "").lower() == "style"):
             if attrs.get("href"):
                 self.stylesheets.append(attrs["href"])
         elif tag == "style":
@@ -212,6 +212,58 @@ def find_business_services(business_name, text):
     return found
 
 
+def css_color_hex(value):
+    if value.startswith("#"):
+        value = value.upper()
+        return "#" + "".join(ch * 2 for ch in value[1:]) if len(value) == 4 else value if len(value) == 7 else None
+    channels = re.match(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?", value, re.I)
+    if not channels or (channels.group(4) is not None and float(channels.group(4)) == 0):
+        return None
+    return "#" + "".join(f"{min(255, int(channels.group(i))):02X}" for i in (1, 2, 3))
+
+
+def extract_brand_palette(html, page_url):
+    page = PageParser()
+    page.feed(html)
+    css = " ".join(page.styles)
+    for stylesheet in page.stylesheets[:5]:
+        try:
+            stylesheet_text, _ = fetch_page(urljoin(page_url, stylesheet), limit=500_000, timeout=8)
+            css += " " + stylesheet_text
+        except (HTTPError, URLError, RuntimeError, TimeoutError, OSError):
+            continue
+
+    variables = {}
+    for number, raw in re.findall(r"--color_(\d+)\s*:\s*(#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?|rgba?\([^)]{1,80}\))", css, re.I):
+        color = css_color_hex(raw)
+        if color:
+            variables.setdefault(number, color)
+    if variables:
+        roles = {"primary": "1", "secondary": "2", "accent": "4", "background": "6", "surface": "7", "text": "8"}
+        return {role: variables[number] for role, number in roles.items() if number in variables}
+
+    counts = Counter(
+        color for raw in re.findall(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?|rgba?\([^)]{1,80}\)", css, re.I)
+        if (color := css_color_hex(raw))
+    )
+    colors = [color for color, _ in counts.most_common()]
+    neutral = [color for color in colors if max(int(color[i:i + 2], 16) for i in (1, 3, 5)) - min(int(color[i:i + 2], 16) for i in (1, 3, 5)) < 24]
+    vivid = [color for color in colors if color not in neutral]
+    brightness = lambda color: sum(int(color[i:i + 2], 16) for i in (1, 3, 5))
+    light = sorted((color for color in neutral if brightness(color) > 560), key=brightness, reverse=True)
+    dark = sorted((color for color in neutral if brightness(color) < 420), key=brightness)
+    return {
+        key: value for key, value in {
+            "primary": vivid[0] if vivid else None,
+            "secondary": vivid[1] if len(vivid) > 1 else None,
+            "accent": vivid[2] if len(vivid) > 2 else vivid[0] if vivid else None,
+            "background": light[0] if light else None,
+            "surface": light[1] if len(light) > 1 else light[0] if light else None,
+            "text": dark[0] if dark else None,
+        }.items() if value
+    }
+
+
 def research_business(business):
     """Read the supplied business site and a few relevant pages; never search by name."""
     website = str(business.get("website") or "").strip()
@@ -228,6 +280,7 @@ def research_business(business):
         f"http://{host}{base_path}",
     )))
     pages, services, images, errors, seen, seen_pages = [], [], [], [], set(), set()
+    brand_palette = {}
     business_name = re.sub(r"[^a-z0-9]+", "", str(business.get("business_name", "")).lower())
     service_pattern = re.compile(r"\b(?:tree|stump|crane|wood chip|emergency|plumb|drain|water heater|backflow|pump|gas line|pipe|repair|installation|cleaning|testing).*(?:service|delivery|removal|trimming|pruning|grinding|crane|repair|install|cleaning|testing|pump|line)\b", re.I)
     non_service_pattern = re.compile(r"\b(testimonials?|reviews?|about|contact|gallery)\b", re.I)
@@ -250,6 +303,8 @@ def research_business(business):
             continue
         page = BusinessPageParser()
         page.feed(html)
+        if not brand_palette:
+            brand_palette = extract_brand_palette(html, final_url)
         page_key = final_url.split("?", 1)[0].rstrip("/").lower()
         if page_key in seen_pages:
             continue
@@ -305,6 +360,7 @@ def research_business(business):
         "services": list(dict.fromkeys(services))[:15],
         "service_details": service_details,
         "images": images[:12],
+        "brand_palette": brand_palette,
         "fetch_errors": errors[:8],
         "note": "Research is limited to pages and search snippets from the supplied website's domain.",
     }
@@ -349,7 +405,7 @@ def load_or_research_business(handoff_path, business):
     path = Path(handoff_path).parent / "business_research.json"
     try:
         saved = load_json(path)
-        if saved.get("business_website") == business.get("website") and saved.get("pages") and saved.get("services") and not all(page.get("source_type") == "first-party search result" for page in saved["pages"]):
+        if saved.get("business_website") == business.get("website") and saved.get("pages") and saved.get("services") and saved.get("brand_palette") and not all(page.get("source_type") == "first-party search result" for page in saved["pages"]):
             return saved
     except (OSError, json.JSONDecodeError, AttributeError):
         pass
@@ -491,7 +547,7 @@ SYSTEM_PROMPT = """Write website copy from the supplied business facts and first
 
 
 CSS = r"""
-:root { --bg: __BG__; --text: __TEXT__; --muted: color-mix(in srgb,__TEXT__ 66%,__BG__); --gold: __ACCENT__; --gold-light: __WARM__; --surface: __SURFACE__; --line: color-mix(in srgb,__TEXT__ 14%,transparent); --max: 1240px; }
+:root { --bg: __BG__; --text: __TEXT__; --muted: color-mix(in srgb,__TEXT__ 66%,__BG__); --gold: __ACCENT__; --gold-light: __WARM__; --brand: __BRAND__; --secondary: __SECONDARY__; --on-accent: __ON_ACCENT__; --surface: __SURFACE__; --line: color-mix(in srgb,__TEXT__ 14%,transparent); --max: 1240px; }
 * { box-sizing:border-box; }
 html { scroll-behavior:smooth; }
 body { margin:0; background:var(--bg); color:var(--text); font:16px/1.6 system-ui,-apple-system,BlinkMacSystemFont,sans-serif; }
@@ -521,7 +577,7 @@ section[id] { scroll-margin-top:110px; }
 .hero-credit { position:absolute; right:18px; bottom:18px; z-index:2; padding:7px 11px; border:1px solid #ffffff55; border-radius:2px; background:#0f1712b8; color:white; font-size:.68rem; }
 .hero-credit a { text-decoration:underline; }
 .button { display:inline-flex; align-items:center; justify-content:center; min-height:54px; margin-top:28px; padding:0 24px; border-radius:2px; background:#d8b663; color:#17291e; font-weight:750; transition:transform .2s,background .2s; }
-.button:hover { transform:translateY(-2px); background:#ead49b; }
+.button:hover { transform:translateY(-2px); background:#ead49b; color:var(--brand); }
 .facts { display:flex; flex-wrap:wrap; justify-content:center; gap:12px 44px; margin:auto; padding:22px 5%; background:#1d3828; color:#f8f5eb; text-align:center; }
 .facts div { font-size:.76rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; }
 .facts .step { color:#d9e4b0; font-size:.68rem; }
@@ -615,8 +671,8 @@ footer { max-width:var(--max); margin:auto; padding:24px 5%; display:flex; justi
 @media(prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } *,*::before,*::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; } }
 """
 
-def css_for_design_spec(design_spec):
-    defaults = {"BG": "#F5F0E6", "TEXT": "#1A1A1A", "SURFACE": "#FFFFFF", "ACCENT": "#3E5C3A", "WARM": "#8B6F47"}
+def css_for_design_spec(design_spec, brand_palette=None):
+    defaults = {"BG": "#F5F0E6", "TEXT": "#1A1A1A", "SURFACE": "#FFFFFF", "ACCENT": "#3E5C3A", "WARM": "#8B6F47", "BRAND": "#1D3828", "SECONDARY": "#3E5C3A", "ON_ACCENT": "#FFFFFF"}
     palette = [c.upper() for c in design_spec.get("palette", []) if isinstance(c, str) and re.fullmatch(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?", c)][:5]
 
     def channels(color):
@@ -641,7 +697,33 @@ def css_for_design_spec(design_spec):
         defaults["TEXT"] = palette[1] if len(palette) > 1 else defaults["TEXT"]
         defaults["ACCENT"] = palette[2] if len(palette) > 2 else defaults["ACCENT"]
 
+    defaults["BRAND"] = defaults["ACCENT"]
+    defaults["SECONDARY"] = defaults["WARM"]
+    if brand_palette:
+        defaults["BG"] = brand_palette.get("background", defaults["BG"])
+        defaults["TEXT"] = brand_palette.get("text", defaults["TEXT"])
+        defaults["SURFACE"] = brand_palette.get("surface", defaults["SURFACE"])
+        defaults["BRAND"] = brand_palette.get("primary", defaults["BRAND"])
+        defaults["ACCENT"] = brand_palette.get("secondary", defaults["ACCENT"])
+        defaults["SECONDARY"] = brand_palette.get("accent", defaults["SECONDARY"])
+        defaults["WARM"] = defaults["SECONDARY"]
+    rgb = channels(defaults["ACCENT"])
+    defaults["ON_ACCENT"] = "#FFFFFF" if sum(rgb) < 390 else "#101010"
+
     css = CSS
+    for color, variable in {
+        "#d8b663": "var(--gold)", "#ead49b": "var(--gold-light)", "#e6ce93": "var(--gold-light)",
+        "#a8c28e": "var(--gold-light)", "#d9e4b0": "var(--gold-light)", "#1d3828": "var(--brand)",
+        "#1f3829": "var(--brand)", "#15271d": "var(--brand)", "#17291e": "var(--on-accent)",
+        "#e9e7d9": "var(--surface)", "rgba(15,31,22,.78)": "color-mix(in srgb,var(--brand) 86%,transparent)",
+        "rgba(8,23,15,.92)": "color-mix(in srgb,var(--brand) 92%,transparent)",
+        "rgba(8,23,15,.68)": "color-mix(in srgb,var(--brand) 68%,transparent)",
+        "rgba(8,23,15,.45)": "color-mix(in srgb,var(--brand) 45%,transparent)",
+        "rgba(8,23,15,.1)": "color-mix(in srgb,var(--brand) 10%,transparent)",
+        "#0f1712b8": "color-mix(in srgb,var(--brand) 72%,transparent)",
+        "#0c1711cc": "color-mix(in srgb,var(--brand) 80%,transparent)",
+    }.items():
+        css = css.replace(color, variable)
     for key, value in defaults.items():
         css = css.replace(f"__{key}__", value)
     return css
@@ -1002,7 +1084,7 @@ def generate_website(handoff_path):
     )
 
     (output_dir / "styles.css").write_text(
-        css_for_design_spec(design_spec),
+        css_for_design_spec(design_spec, research.get("brand_palette")),
         encoding="utf-8",
     )
 
