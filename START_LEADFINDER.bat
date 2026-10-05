@@ -16,17 +16,30 @@ REM --------------------------------------------
 where python >nul 2>&1
 
 if errorlevel 1 (
-    echo Python is not installed.
-    echo.
-    echo Please install Python 3.11 or newer from:
-    echo https://www.python.org/downloads/
-    echo.
-    pause
-    exit /b 1
+    where py >nul 2>&1
+    if errorlevel 1 (
+        echo Python is not installed.
+        echo.
+        echo Please install Python 3.11 or newer from:
+        echo https://www.python.org/downloads/
+        echo.
+        pause
+        exit /b 1
+    )
+    set "PYTHON=py -3"
+) else (
+    set "PYTHON=python"
 )
 
 echo Python found.
-python --version
+%PYTHON% --version
+%PYTHON% -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"
+if errorlevel 1 (
+    echo.
+    echo ERROR: LeadFinder requires Python 3.11 or newer.
+    pause
+    exit /b 1
+)
 echo.
 
 REM --------------------------------------------
@@ -50,7 +63,7 @@ REM Create virtual environment
 REM --------------------------------------------
 if not exist ".venv\Scripts\python.exe" (
     echo Creating virtual environment...
-    python -m venv .venv
+    %PYTHON% -m venv .venv
 
     if errorlevel 1 (
         echo.
@@ -63,11 +76,13 @@ if not exist ".venv\Scripts\python.exe" (
 echo Virtual environment ready.
 echo.
 
-REM --------------------------------------------
-REM Upgrade pip
-REM --------------------------------------------
-echo Updating pip...
-".venv\Scripts\python.exe" -m pip install --upgrade pip
+".venv\Scripts\python.exe" -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"
+if errorlevel 1 (
+    echo ERROR: The existing .venv uses Python older than 3.11.
+    echo Delete the .venv folder and run this launcher again.
+    pause
+    exit /b 1
+)
 
 REM --------------------------------------------
 REM Install required packages
@@ -76,7 +91,7 @@ echo.
 echo Installing LeadFinder dependencies...
 echo.
 
-".venv\Scripts\python.exe" -m pip install Flask openai python-dotenv beautifulsoup4 requests
+".venv\Scripts\python.exe" -m pip install -r requirements.txt
 
 if errorlevel 1 (
     echo.

@@ -72,14 +72,7 @@ def run_pipeline(client_folder):
     # Step 4: Check Validation
     # ----------------------------
 
-    status = "PASS"
-
-
-    if isinstance(report, dict):
-
-        if report.get("status") == "FAIL":
-
-            status = "FAILED"
+    status = "PASS" if isinstance(report, dict) and report.get("status") == "PASS" else "NEEDS REVIEW"
 
 
 
@@ -113,6 +106,8 @@ def run_pipeline(client_folder):
         print(
             f"Delivery file created: {delivery}"
         )
+    else:
+        (client_folder / "DELIVERY.json").unlink(missing_ok=True)
 
     sales_package = generate_sales_package(
         client_folder

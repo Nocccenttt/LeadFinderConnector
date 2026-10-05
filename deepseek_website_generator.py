@@ -28,6 +28,11 @@ TREE_PHOTOS = [
     {"url": "images/team_pruning.jpeg", "alt": "Illustrative stock photo: workers pruning trees", "credit": "Anna Shvets / Pexels", "source": "https://www.pexels.com/photo/colleagues-cutting-branches-with-garden-equipment-in-orchard-5231049/"},
     {"url": "images/pruning.jpeg", "alt": "Illustrative stock photo: worker pruning branches", "credit": "Mark Stebnicki / Pexels", "source": "https://www.pexels.com/photo/man-trimming-branches-7509490/"},
 ]
+STUMP_PHOTOS = [
+    {"url": "https://images.pexels.com/photos/37038506/pexels-photo-37038506/free-photo-of-tree-stump-in-sunlit-garden-with-houses.jpeg?auto=compress&cs=tinysrgb&w=1800", "alt": "Tree stump in a residential garden; illustrative stock photo", "credit": "Pexels", "source": "https://www.pexels.com/search/stump%20grinder/"},
+    {"url": "https://images.pexels.com/photos/9806894/pexels-photo-9806894.jpeg?auto=compress&cs=tinysrgb&w=1200", "alt": "Recently cut tree stump with sawdust; illustrative stock photo", "credit": "Pexels", "source": "https://www.pexels.com/search/stump%20grinder/"},
+    {"url": "https://images.pexels.com/photos/15374402/pexels-photo-15374402/free-photo-of-tree-trunk-by-roadside.jpeg?auto=compress&cs=tinysrgb&w=1200", "alt": "Tree stump beside a neighborhood road; illustrative stock photo", "credit": "Pexels", "source": "https://www.pexels.com/search/stump%20grinder/"},
+]
 
 
 class GalleryParser(HTMLParser):
@@ -175,7 +180,9 @@ class BusinessPageParser(HTMLParser):
 
 
 def find_business_services(business_name, text):
-    if "tree" in business_name:
+    is_tree = "tree" in business_name
+    is_stump = "stump" in business_name
+    if is_tree:
         patterns = (
         ("Emergency Tree & Crane Services", r"\bemergency\b.{0,80}\b(?:tree|crane)"),
         ("Tree Removal Services", r"\btree removal\b"),
@@ -183,6 +190,11 @@ def find_business_services(business_name, text):
         ("Tree Pruning", r"\bprun(?:e|ing)\b"),
         ("Stump Grinding & Removal Services", r"\bstump grind(?:ing)?\b"),
         ("Local Wood Chip Deliveries", r"\bwood chips?\b.{0,60}\bdeliver"),
+        )
+    elif is_stump:
+        patterns = (
+            ("Stump Grinding", r"\bstump grind(?:ing)?\b"),
+            ("Stump Removal", r"\bstump remov(?:al|e)\b"),
         )
     else:
         patterns = ()
@@ -192,7 +204,7 @@ def find_business_services(business_name, text):
         matches = [sentence for sentence in sentences if re.search(pattern, sentence, re.I)]
         if matches:
             found[label] = " ".join(dict.fromkeys(matches))[:280]
-    if "tree" not in business_name:
+    if not (is_tree or is_stump):
         service_phrase = re.compile(r"\b(?:[a-z0-9&/-]+\s+){0,3}(?:services?|repairs?|installations?|replacements?|cleaning|testing|inspections?|maintenance|pumps?|lines?|jetting|repiping|heaters?|pipes?|plumbing)\b", re.I)
         for sentence in sentences:
             if len(sentence) > 100:
@@ -282,8 +294,8 @@ def research_business(business):
     pages, services, images, errors, seen, seen_pages = [], [], [], [], set(), set()
     brand_palette = {}
     business_name = re.sub(r"[^a-z0-9]+", "", str(business.get("business_name", "")).lower())
-    service_pattern = re.compile(r"\b(?:tree|stump|crane|wood chip|emergency|plumb|drain|water heater|backflow|pump|gas line|pipe|repair|installation|cleaning|testing).*(?:service|delivery|removal|trimming|pruning|grinding|crane|repair|install|cleaning|testing|pump|line)\b", re.I)
-    non_service_pattern = re.compile(r"\b(testimonials?|reviews?|about|contact|gallery)\b", re.I)
+    is_tree = "tree" in business_name
+    is_stump = "stump" in business_name
     service_details = {}
 
     while queue and len(pages) < 3:
@@ -318,8 +330,17 @@ def research_business(business):
             "headings": page.headings[:24],
             "text": page_text[:3500],
         })
-        service_text = pages[-1]["text"] if "tree" in business_name else "\n".join(page.link_texts)
+        service_text = pages[-1]["text"] if is_tree or is_stump else "\n".join(page.link_texts)
         details = find_business_services(business_name, service_text)
+        service_path = urlparse(final_url).path.lower()
+        if not (is_tree or is_stump) and re.search(r"service|solution|product|offering|capabilit|what[-_]we[-_]do|specialt|treatment", service_path):
+            ignored_headings = {"services", "our services", "all services", "what we do", "solutions", "our solutions", "products", "about us", "contact", "reviews", "testimonials", "faq", "frequently asked questions"}
+            for heading in page.headings:
+                label = re.sub(r"\s+", " ", heading).strip(" .:-")
+                if not 3 <= len(label) <= 80 or label.casefold() in ignored_headings:
+                    continue
+                excerpt = next((sentence for sentence in re.split(r"(?<=[.!?])\s+|\s*[\r\n]+\s*", pages[-1]["text"]) if label.casefold() in sentence.casefold()), "Listed on the business's own service page.")
+                details.setdefault(label, excerpt[:280])
         services.extend(details)
         service_details.update(details)
         for image in page.images:
@@ -333,13 +354,13 @@ def research_business(business):
             if parts.scheme not in ("http", "https") or (parts.hostname or "").removeprefix("www.") != host or candidate in seen:
                 continue
             path = parts.path.lower()
-            score = sum(word in path for word in ("service", "tree", "about", "emergency", "contact", "stump", "crane", "residential", "commercial", "backflow", "plumb", "drain", "water", "heater"))
+            score = sum(word in path for word in ("service", "tree", "about", "emergency", "contact", "stump", "crane", "residential", "commercial", "backflow", "plumb", "drain", "water", "heater", "solution", "product", "offering", "capabilit", "what-we-do", "specialt", "treatment"))
             if score:
                 candidates.append((score, candidate))
         queue.extend(url for _, url in sorted(set(candidates), reverse=True))
 
     if not pages:
-        search_terms = "tree removal trimming pruning emergency crane stump grinding" if "tree" in business_name else "services"
+        search_terms = "tree removal trimming pruning emergency crane stump grinding" if is_tree else "stump grinding stump removal estimate" if is_stump else "services"
         results, search_error = tavily_search(f'site:{host} "{business.get("business_name", "")}" {search_terms}', host)
         for result in results:
             result_host = (urlparse(result["url"]).hostname or "").removeprefix("www.")
@@ -347,8 +368,6 @@ def research_business(business):
                 continue
             text = " ".join([result.get("description", ""), *result.get("snippets", [])]).strip()
             pages.append({"url": result["url"], "title": result["title"], "description": result.get("description", ""), "headings": [result["title"]], "text": text[:1800], "source_type": "first-party search result"})
-            if "tree" not in business_name and service_pattern.search(result["title"]) and not non_service_pattern.search(result["title"]):
-                services.append(result["title"])
             details = find_business_services(business_name, text)
             services.extend(details)
             service_details.update(details)
@@ -405,7 +424,7 @@ def load_or_research_business(handoff_path, business):
     path = Path(handoff_path).parent / "business_research.json"
     try:
         saved = load_json(path)
-        if saved.get("business_website") == business.get("website") and saved.get("pages") and saved.get("services") and saved.get("brand_palette") and not all(page.get("source_type") == "first-party search result" for page in saved["pages"]):
+        if saved.get("business_website") == business.get("website") and saved.get("pages"):
             return saved
     except (OSError, json.JSONDecodeError, AttributeError):
         pass
@@ -543,7 +562,7 @@ def generate_reference_analysis(handoff_path, reference_index=0):
     return output
 
 
-SYSTEM_PROMPT = """Write website copy from the supplied business facts and first-party website research. Research text is the source of truth; do not invent claims, ratings, years, credentials, prices, guarantees, or services. List only services present in the research services list, using each supplied name exactly; describe only details supported by the research text. Make the copy specific to this business, not generic advice or a visitor guide. Return JSON with exactly: headline, subheadline, intro_title, intro, services (up to 6 objects with exact supplied name and concise grounded description), proof_points (up to 3 objects with title and text grounded in research), cta_title, cta_text. Keep text concise and natural."""
+SYSTEM_PROMPT = """Write specific website copy from the supplied business facts and research. Research is the source of truth: do not invent claims, ratings, years, credentials, prices, guarantees, services, or customer stories. List only supplied services and describe only supported details. Return JSON with exactly: headline, subheadline, intro_title, intro, services (up to 6 objects with exact supplied name and grounded description), proof_points (up to 3 grounded title/text objects), cta_title, cta_text. Keep it concise and natural."""
 
 
 CSS = r"""
@@ -578,8 +597,9 @@ section[id] { scroll-margin-top:110px; }
 .hero-credit a { text-decoration:underline; }
 .button { display:inline-flex; align-items:center; justify-content:center; min-height:54px; margin-top:28px; padding:0 24px; border-radius:2px; background:#d8b663; color:#17291e; font-weight:750; transition:transform .2s,background .2s; }
 .button:hover { transform:translateY(-2px); background:#ead49b; color:var(--brand); }
-.facts { display:flex; flex-wrap:wrap; justify-content:center; gap:12px 44px; margin:auto; padding:22px 5%; background:#1d3828; color:#f8f5eb; text-align:center; }
-.facts div { font-size:.76rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; }
+.facts { display:flex; flex-wrap:wrap; justify-content:center; gap:16px 44px; margin:auto; padding:22px 5%; background:#1d3828; color:#f8f5eb; text-align:center; }
+.facts div { display:flex; flex-direction:column; gap:3px; min-width:120px; font-size:.76rem; font-weight:700; letter-spacing:.04em; }
+.facts div span { color:#ffffffb8; font-size:.64rem; letter-spacing:.1em; text-transform:uppercase; }
 .facts .step { color:#d9e4b0; font-size:.68rem; }
 .facts a { text-decoration:underline; text-underline-offset:3px; }
 .about { max-width:var(--max); margin:auto; padding:120px 5%; display:grid; grid-template-columns:1.1fr .9fr; gap:8%; align-items:center; }
@@ -611,54 +631,22 @@ section[id] { scroll-margin-top:110px; }
 .photo-grid figure { position:relative; height:100%; margin:0; overflow:hidden; background:var(--surface); }
 .photo-grid figure:first-child { grid-column:1; grid-row:1 / span 2; }
 .photo-grid figure:nth-child(3) { grid-column:3; grid-row:1 / span 2; }
+.photo-grid.single-photo { grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(220px,420px); }
+.photo-grid.single-photo figure:first-child { grid-column:auto; grid-row:auto; }
 .photo-grid img { width:100%; height:100%; object-fit:cover; transition:transform .35s; }
 .photo-grid figure:hover img { transform:scale(1.04); }
 .photo-grid figcaption { position:absolute; inset:auto 0 0; padding:24px 14px 12px; color:white; font-size:.76rem; background:linear-gradient(transparent,#0c1711cc); }
-html.scroll-effects-ready .about .about-photo { clip-path:inset(0 100% 0 0); transition:clip-path .95s cubic-bezier(.2,.75,.2,1); }
-html.scroll-effects-ready .about.is-visible .about-photo { clip-path:inset(0); }
-html.scroll-effects-ready .need-grid article { opacity:0; transform:translateX(-22px); transition:opacity .45s ease,transform .65s cubic-bezier(.2,.75,.2,1); }
-.need-section.is-visible .need-grid article { opacity:1; transform:none; }
-.need-section.is-visible .need-grid article:nth-child(2) { transition-delay:.12s; }
-.need-section.is-visible .need-grid article:nth-child(3) { transition-delay:.24s; }
-html.scroll-effects-ready .service-grid article { opacity:0; transform:translateY(24px); transition:opacity .5s ease,transform .7s cubic-bezier(.2,.75,.2,1); }
-.services.is-visible .service-grid article { opacity:1; transform:none; }
-.services.is-visible .service-grid article:nth-child(2),.services.is-visible .service-grid article:nth-child(5) { transition-delay:.1s; }
-.services.is-visible .service-grid article:nth-child(3),.services.is-visible .service-grid article:nth-child(6) { transition-delay:.2s; }
-html.scroll-effects-ready .photo-grid figure { clip-path:inset(100% 0 0 0); transition:clip-path .85s cubic-bezier(.2,.75,.2,1); }
-html.scroll-effects-ready .photo-grid img { transform:scale(1.1); transition:transform 1.1s cubic-bezier(.2,.75,.2,1); }
-.field-notes.is-visible .photo-grid figure { clip-path:inset(0); }
-.field-notes.is-visible .photo-grid img { transform:scale(1); }
-.field-notes.is-visible .photo-grid figure:nth-child(2) { transition-delay:.12s; }
-.field-notes.is-visible .photo-grid figure:nth-child(2) img { transition-delay:.12s; }
-html.scroll-effects-ready .owner-note { clip-path:inset(0 100% 0 0); transition:clip-path .8s cubic-bezier(.2,.75,.2,1); }
-html.scroll-effects-ready .owner-note.is-visible { clip-path:inset(0); }
-html.scroll-effects-ready .review-grid blockquote { opacity:0; transform:translateX(20px); transition:opacity .5s ease,transform .7s cubic-bezier(.2,.75,.2,1); }
-.reviews.is-visible .review-grid blockquote { opacity:1; transform:none; }
-.reviews.is-visible .review-grid blockquote:nth-child(2) { transition-delay:.16s; }
-html.scroll-effects-ready .tree-notes > * { opacity:0; transform:translateY(18px); transition:opacity .55s ease,transform .7s cubic-bezier(.2,.75,.2,1); }
-html.scroll-effects-ready .tree-notes.is-visible > * { opacity:1; transform:none; }
-html.scroll-effects-ready .tree-notes.is-visible > :nth-child(2) { transition-delay:.15s; }
-html.scroll-effects-ready .contact { opacity:0; transform:scale(.975); transition:opacity .55s ease,transform .7s cubic-bezier(.2,.75,.2,1); }
-html.scroll-effects-ready .contact.is-visible { opacity:1; transform:scale(1); }
-.owner-note { max-width:var(--max); margin:0 auto 90px; padding:58px 7%; display:grid; grid-template-columns:.7fr 1.3fr; gap:7%; align-items:center; background:#e9e7d9; border-left:4px solid #d8b663; }
-.owner-note h2 { margin:0; font-family:Georgia,'Times New Roman',serif; font-size:clamp(2.2rem,4vw,3.8rem); line-height:1.02; font-weight:500; }
-.owner-note p:last-child { margin:0; color:var(--muted); font-size:1.08rem; }
+.about.text-only { display:block; max-width:850px; }
+.about.text-only .about-copy > p:last-child { max-width:700px; }
+.scroll-reveal.is-visible .about-photo,.scroll-reveal.is-visible .need-grid article,.scroll-reveal.is-visible .service-grid article,.scroll-reveal.is-visible .photo-grid figure,.scroll-reveal.is-visible .review-grid blockquote,.scroll-reveal.is-visible.contact { animation:reveal-up .65s cubic-bezier(.2,.75,.2,1) both; }
+.scroll-reveal.is-visible .need-grid article:nth-child(2),.scroll-reveal.is-visible .service-grid article:nth-child(2),.scroll-reveal.is-visible .photo-grid figure:nth-child(2),.scroll-reveal.is-visible .review-grid blockquote:nth-child(2) { animation-delay:.12s; }
+.scroll-reveal.is-visible .need-grid article:nth-child(3),.scroll-reveal.is-visible .service-grid article:nth-child(3),.scroll-reveal.is-visible .photo-grid figure:nth-child(3) { animation-delay:.24s; }
+@keyframes reveal-up { from { opacity:.72; transform:translateY(18px); } to { opacity:1; transform:none; } }
 .reviews { max-width:var(--max); margin:0 auto; padding:0 5% 100px; }
 .review-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:18px; }
 .review-grid blockquote { margin:0; padding:26px 28px; border-left:2px solid #d8b663; background:transparent; font-family:Georgia,'Times New Roman',serif; font-size:1.45rem; line-height:1.45; }
 .review-grid cite { display:block; margin-top:20px; color:var(--muted); font:600 .74rem system-ui,sans-serif; letter-spacing:.08em; text-transform:uppercase; }
 .reviews > a { display:inline-block; margin-top:18px; text-decoration:underline; text-underline-offset:4px; }
-.tree-notes { max-width:var(--max); margin:0 auto; padding:24px 5% 112px; display:grid; grid-template-columns:1fr 1fr; gap:9%; align-items:start; }
-.tree-notes h2 { max-width:520px; margin:0 0 18px; font-family:Georgia,'Times New Roman',serif; font-size:clamp(2.3rem,4vw,3.7rem); line-height:1.04; letter-spacing:-.045em; font-weight:500; }
-.tree-notes p { color:var(--muted); }
-.tree-notes .button { margin-top:12px; }
-.tree-notes .source { display:block; margin-top:14px; color:var(--muted); font-size:.78rem; }
-.tree-notes .source a { text-decoration:underline; text-underline-offset:3px; }
-.tree-faq { border-top:1px solid var(--line); }
-.tree-faq .eyebrow { margin:0; padding:18px 0; }
-.tree-faq details { border-top:1px solid var(--line); }
-.tree-faq summary { padding:18px 24px 18px 0; cursor:pointer; font-weight:700; }
-.tree-faq details p { margin:0; padding:0 0 20px; }
 .contact { max-width:calc(var(--max) - 10%); margin:0 auto 78px; padding:58px 7%; display:flex; flex-wrap:wrap; align-items:center; gap:12px 36px; background:#1f3829; color:white; border-radius:3px; }
 .contact .eyebrow { width:100%; color:#d9e4b0; margin:0; }
 .contact h2 { flex:1 1 420px; margin:0; font-family:Georgia,'Times New Roman',serif; font-size:clamp(2.2rem,5vw,4.1rem); line-height:1; letter-spacing:-.045em; font-weight:500; }
@@ -667,7 +655,7 @@ html.scroll-effects-ready .contact.is-visible { opacity:1; transform:scale(1); }
 .contact > a:not(.button) { flex-basis:100%; margin:0; color:#ffffffd9; text-decoration:underline; text-underline-offset:4px; }
 footer { max-width:var(--max); margin:auto; padding:24px 5%; display:flex; justify-content:space-between; gap:20px; border-top:1px solid var(--line); color:var(--muted); font-size:.85rem; }
 @media(max-width:980px) { .service-grid { grid-template-columns:repeat(2,1fr); } .photo-grid { grid-template-columns:repeat(2,1fr); grid-template-rows:190px 190px; } .photo-grid figure:first-child,.photo-grid figure:nth-child(3) { grid-column:auto; grid-row:auto; } }
-@media(max-width:720px) { .site-header { height:76px; margin-bottom:-76px; padding:0 6%; } section[id] { scroll-margin-top:90px; } .site-header nav { gap:14px; font-size:.8rem; } .site-header nav a:not(.nav-call) { display:none; } .hero { min-height:700px; padding:120px 7% 75px; } .hero-copy { padding-left:18px; } .hero h1 { font-size:clamp(3.6rem,15vw,6rem); } .facts { gap:12px 20px; padding:18px 6%; } .facts div { font-size:.68rem; } .about { padding:72px 6%; grid-template-columns:1fr; gap:30px; } .about-photo { height:300px; } .need-section { padding:0 6% 72px; } .need-grid { grid-template-columns:1fr; gap:10px; } .need-grid article { min-height:0; padding:20px 0; } .services { padding:58px 6% 72px; } .service-grid,.review-grid { grid-template-columns:1fr; gap:12px; } .service-grid article { min-height:0; padding:22px 0; } .tree-notes { padding:10px 6% 72px; grid-template-columns:1fr; gap:35px; } .field-notes,.reviews { padding:0 6% 72px; } .photo-grid { grid-template-columns:1fr 1fr; grid-template-rows:none; gap:8px; } .photo-grid figure,.photo-grid figure:first-child,.photo-grid figure:nth-child(3) { grid-column:auto; grid-row:auto; height:190px; } .owner-note { margin:0 6% 72px; padding:34px 26px; grid-template-columns:1fr; gap:15px; } .contact { margin:0 6% 48px; padding:38px 28px; } footer { padding:22px 6%; flex-direction:column; gap:5px; } }
+@media(max-width:720px) { .site-header { height:76px; margin-bottom:-76px; padding:0 6%; } section[id] { scroll-margin-top:90px; } .site-header nav { gap:14px; font-size:.8rem; } .site-header nav a:not(.nav-call) { display:none; } .hero { min-height:700px; padding:120px 7% 75px; } .hero-copy { padding-left:18px; } .hero h1 { font-size:clamp(3.6rem,15vw,6rem); } .facts { gap:12px 20px; padding:18px 6%; } .facts div { font-size:.68rem; } .about { padding:72px 6%; grid-template-columns:1fr; gap:30px; } .about-photo { height:300px; } .need-section { padding:0 6% 72px; } .need-grid { grid-template-columns:1fr; gap:10px; } .need-grid article { min-height:0; padding:20px 0; } .services { padding:58px 6% 72px; } .service-grid,.review-grid { grid-template-columns:1fr; gap:12px; } .service-grid article { min-height:0; padding:22px 0; } .field-notes,.reviews { padding:0 6% 72px; } .photo-grid { grid-template-columns:1fr 1fr; grid-template-rows:none; gap:8px; } .photo-grid figure,.photo-grid figure:first-child,.photo-grid figure:nth-child(3) { grid-column:auto; grid-row:auto; height:190px; } .photo-grid.single-photo { grid-template-columns:1fr; grid-template-rows:240px; } .photo-grid.single-photo figure { height:240px; } .contact { margin:0 6% 48px; padding:38px 28px; } footer { padding:22px 6%; flex-direction:column; gap:5px; } }
 @media(prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } *,*::before,*::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; } }
 """
 
@@ -879,11 +867,11 @@ def verified_business_content(business, generated, research):
     parts = [part.strip() for part in address.split(",")]
     location = ", ".join(parts[-3:-1]) if len(parts) >= 3 else ""
     location = re.sub(r"\s+\d{5}(?:-\d{4})?$", "", location)
-    is_tree = "tree" in name.lower()
+    first_service = next(iter(research.get("services", [])), "")
     fallback = {
-        "headline": f"Tree work across {location}" if is_tree and location else name,
+        "headline": f"{first_service} in {location}" if first_service and location else name,
         "subheadline": f"{name} · {location}" if location else name,
-        "intro_title": f"Tree care in {location}" if is_tree and location else name,
+        "intro_title": f"About {name}",
         "intro": f"Call {name} to ask about current availability and services.",
         "cta_title": f"Talk with {name}",
         "cta_text": f"Call {business.get('phone', '')} to discuss the work you need.",
@@ -956,6 +944,7 @@ def generate_research_only(handoff_path):
 
 def build_html(business, content, design_spec=None, research=None):
     research = research or {}
+    content = content or {}
     name = get_business_name(business, {})
     phone, address = business.get("phone", ""), business.get("address", "")
     phone_href = "tel:" + re.sub(r"[^0-9+]", "", str(phone))
@@ -963,70 +952,72 @@ def build_html(business, content, design_spec=None, research=None):
     location = ", ".join(parts[-3:-1]) if len(parts) >= 3 else ""
     location = re.sub(r"\s+\d{5}(?:-\d{4})?$", "", location)
     is_tree = "tree" in name.lower()
-    business_label = "Tree service" if is_tree else name
+    is_stump = "stump" in name.lower()
     phone_html = phone_link(phone)
     brand_initial = escape(name[:1].upper() if name else "B")
-    address_html = f'<p class="address">{escape(str(address))}</p>' if address and not is_tree else ""
-    directions = f'<a class="directions" href="https://maps.google.com/?{urlencode({"q": address})}" target="_blank" rel="noopener">Get directions ↗</a>' if address and not is_tree else ""
-    if is_tree:
-        facts = "".join(f"<div>{label}</div>" for label in ("Insured tree services", "North Raleigh · Wake Forest", "24/7 emergency & crane · North Raleigh"))
-    else:
-        facts = "".join(f'<div><strong>{escape(str(value))}</strong><span>{label}</span></div>' for value, label in ((business_label, "Business"), (location, "Location")) if value)
-        if phone:
-            digits = "".join(c for c in str(phone) if c.isdigit() or c == "+")
-            facts += f'<div><a href="tel:{escape(digits)}"><strong>{escape(str(phone))}</strong><span>Call directly ↗</span></a></div>'
+    address_html = f'<p class="address">{escape(str(address))}</p>' if address else ""
+    directions = f'<a class="directions" href="https://maps.google.com/?{urlencode({"q": address})}" target="_blank" rel="noopener">Get directions ↗</a>' if address else ""
+    facts = "".join(
+        f'<div><strong>{escape(value)}</strong><span>{label}</span></div>'
+        for value, label in ((name, "Business"), (location, "Location"), (str(phone), "Call directly ↗")) if value
+    )
 
-    services = content.get("services", [])
+    services = [item for item in content.get("services", []) if isinstance(item, dict) and item.get("name")]
     service_html = "".join(
         f'<article><span class="eyebrow">{index:02d}</span><h3>{escape(str(item["name"]))}</h3>'
         f'<p>{escape(str(item.get("description", "")))}</p></article>'
         for index, item in enumerate(services, 1)
     )
-    services_title = "Tree care from canopy to stump" if is_tree else f"Services from {escape(name)}"
-    services_section = f'<section id="services" class="services scroll-reveal"><div class="service-heading"><p class="eyebrow">THE CARE</p><h2>{services_title}</h2></div><div class="service-grid">{service_html}</div></section>' if service_html else ""
-    issue_section = f'''<section class="need-section"><p class="eyebrow">START WITH WHAT YOU’RE SEEING</p><h2>What needs attention?</h2><div class="need-grid"><article><p class="eyebrow">AFTER A STORM</p><h3>A tree or limb came down?</h3><p>Emergency tree and crane services are available 24/7 in the local North Raleigh area.</p><a href="{escape(phone_href, quote=True)}">Call about storm damage ↗</a></article><article><p class="eyebrow">MORE LIGHT</p><h3>Branches crowding your space?</h3><p>Tree trimming removes dead branches and can bring more light to your landscape and home.</p><a href="{escape(phone_href, quote=True)}">Ask about trimming ↗</a></article><article><p class="eyebrow">CLEAR THE STUMP</p><h3>Need the stump ground?</h3><p>The self-propelled grinder fits through a 36-inch gate and grinds stumps 6 inches below ground level.</p><a href="{escape(phone_href, quote=True)}">Ask about stump grinding ↗</a></article></div></section>''' if is_tree else ""
-    tree_notes = f'''<section class="tree-notes"><div><p class="eyebrow">A USEFUL STARTING POINT</p><h2>Every tree has its own timing.</h2><p>Pruning timing can depend on the tree species, its condition, and the reason for pruning. Note what you’re seeing—dead branches, a need for more light, or a goal of supporting tree health and growth—then call to discuss the next step.</p>{phone_html}<small class="source">Timing guidance: <a href="https://content.ces.ncsu.edu/extension-gardener-handbook/11-woody-ornamentals" target="_blank" rel="noopener">NC State Extension</a></small></div><div class="tree-faq"><p class="eyebrow">COMMON QUESTIONS</p><details><summary>What can tree trimming help with?</summary><p>Brown’s describes trimming as a way to remove dead branches and bring more light to your landscape and home.</p></details><details><summary>What is tree pruning for?</summary><p>Brown’s offers pruning to support the health and growth of your trees.</p></details><details><summary>Not sure which one fits?</summary><p>Call Brown’s Tree Service and explain what you’d like to change.</p></details></div></section>''' if is_tree else ""
-    website = research.get("pages", [{}])[0].get("url", business.get("website", "")) if research.get("pages") else business.get("website", "")
+    services_title = "How we can help"
+    services_section = f'<section id="services" class="services scroll-reveal"><div class="service-heading"><p class="eyebrow">SERVICES</p><h2>{services_title}</h2></div><div class="service-grid">{service_html}</div></section>' if service_html else ""
+    proof_points = [item for item in content.get("proof_points", []) if isinstance(item, dict) and item.get("title") and item.get("text")]
+    proof_html = "".join(f'<article><p class="eyebrow">{index:02d}</p><h3>{escape(str(item["title"]))}</h3><p>{escape(str(item["text"]))}</p></article>' for index, item in enumerate(proof_points, 1))
+    proof_section = f'<section class="need-section scroll-reveal"><p class="eyebrow">WHY PEOPLE CALL</p><h2>The details that matter.</h2><div class="need-grid">{proof_html}</div></section>' if proof_html else ""
+    website = business.get("website", "")
     website_html = f'<a href="{escape(str(website), quote=True)}" target="_blank" rel="noopener">Visit the business website ↗</a>' if website.startswith(("https://", "http://")) else ""
-    photos = TREE_PHOTOS if is_tree else research.get("images", [])
+    photos = research.get("images", []) or (TREE_PHOTOS if is_tree else STUMP_PHOTOS if is_stump else [])
     def photo(item, class_name, loading="lazy"):
         if not item:
             return ""
-        alt = item.get("alt") or "Brown’s Tree Service project photo"
+        alt = item.get("alt") or f"Photo of {name}"
         return f'<img class="{class_name}" src="{escape(item["url"], quote=True)}" alt="{escape(alt, quote=True)}" loading="{loading}">'
     hero_image = photo(photos[0], "hero-image", "eager") if photos else ""
-    hero_credit = f'<p class="hero-credit">Illustrative photo by <a href="{escape(photos[0]["source"], quote=True)}">{escape(photos[0]["credit"])}</a></p>' if is_tree else (f'<p class="hero-credit">Photo from <a href="{escape(str(website), quote=True)}">{escape(name)}</a></p>' if research.get("images") else "")
+    image_source = photos[0].get("source", website)
+    image_credit = photos[0].get("credit", "Business website photo" if research.get("images") else "Illustrative photo")
+    hero_credit = f'<p class="hero-credit">{escape(image_credit)} · <a href="{escape(str(image_source), quote=True)}">Source</a></p>' if photos else ""
     about_photo = f'<div class="about-photo">{photo(photos[1] if len(photos) > 1 else photos[0], "about-image")}</div>' if photos else ""
-    tree_gallery = "".join(f'<figure>{photo(item, "gallery-image")}<figcaption>{escape(item["alt"])} · <a href="{escape(item["source"], quote=True)}">{escape(item["credit"])}</a></figcaption></figure>' for item in photos[2:6]) if is_tree else ""
-    gallery_section = f'<section class="field-notes"><p class="eyebrow">ON THE JOB</p><h2>Tree work, in the field.</h2><div class="photo-grid">{tree_gallery}</div></section>' if is_tree and tree_gallery else ""
-    owner_section = f'<section class="owner-note"><div><p class="eyebrow">A PERSONAL ESTIMATE</p><h2>Craig Brown is on every job site.</h2></div><p>Estimates are given by owner/operator Craig Brown, who works on every job site.</p></section>' if is_tree else ""
+    gallery = "".join(
+        f'<figure>{photo(item, "gallery-image")}<figcaption>{escape(item.get("alt", "Project photo"))} · {escape(item.get("credit", "Business website photo"))}</figcaption></figure>'
+        for item in photos[2:6]
+    )
+    gallery_class = "photo-grid single-photo" if len(photos[2:6]) == 1 else "photo-grid"
+    gallery_section = f'<section class="field-notes scroll-reveal"><p class="eyebrow">IN PICTURES</p><h2>A closer look.</h2><div class="{gallery_class}">{gallery}</div></section>' if gallery else ""
     testimonials = research.get("testimonials", [])
-    review_cards = "".join(f'<blockquote>“{escape(item["quote"])}”<cite>{escape(item["author"])} · Google review</cite></blockquote>' for item in testimonials if item.get("quote") and item.get("author"))
+    review_cards = "".join(f'<blockquote>“{escape(item["quote"])}”<cite>{escape(item["author"])} · Customer review</cite></blockquote>' for item in testimonials if isinstance(item, dict) and item.get("quote") and item.get("author"))
     reviews_url = research.get("testimonials_url", "")
     review_link = f'<a href="{escape(reviews_url, quote=True)}" target="_blank" rel="noopener">Read more customer stories ↗</a>' if reviews_url.startswith(("https://", "http://")) else ""
-    reviews_section = f'<section class="reviews"><p class="eyebrow">FROM LOCAL CUSTOMERS</p><h2>Work that leaves a good impression.</h2><div class="review-grid">{review_cards}</div>{review_link}</section>' if is_tree and review_cards else ""
+    reviews_section = f'<section class="reviews scroll-reveal"><p class="eyebrow">CUSTOMER FEEDBACK</p><h2>From people who know their work.</h2><div class="review-grid">{review_cards}</div>{review_link}</section>' if review_cards else ""
+    nav_services = '<a href="#services">Services</a>' if services_section else ""
+    nav_about = '<a href="#about">About</a>'
+    text_only = " text-only" if not about_photo else ""
 
     html = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(name)}</title><link rel="stylesheet" href="styles.css"><script src="script.js" defer></script></head>
 <body><header class="site-header"><a class="brand" href="#top"><span class="brand-mark">{brand_initial}</span>{escape(name)}</a>
-<nav><a href="#services">Services</a><a href="#about">About</a><a href="#contact">Contact</a>{phone_html.replace('class="button primary"', 'class="nav-call"')}</nav></header>
-<main id="top"><section class="hero">{hero_image}<div class="hero-copy"><p class="eyebrow">{escape(business_label)} · {escape(location)}</p>
-<h1>{'Tree care,<br>from canopy<br>to stump.' if is_tree else escape(content['headline'])}</h1><p class="lead">{'Trimming, pruning, tree removal, stump grinding, and emergency tree & crane service across North Raleigh, Wake Forest, and nearby areas.' if is_tree else escape(content['subheadline'])}</p>{phone_html}</div>{hero_credit}</section>
+<nav>{nav_services}{nav_about}<a href="#contact">Contact</a>{phone_html.replace('class="button primary"', 'class="nav-call"')}</nav></header>
+<main id="top"><section class="hero">{hero_image}<div class="hero-copy"><p class="eyebrow">{escape(name)}{f' · {escape(location)}' if location else ''}</p>
+<h1>{escape(content.get('headline') or name)}</h1><p class="lead">{escape(content.get('subheadline') or content.get('intro', ''))}</p>{phone_html}</div>{hero_credit}</section>
 <section class="facts" aria-label="Business details">{facts}</section>
-<section id="about" class="about scroll-reveal">{about_photo}<div class="about-copy"><p class="eyebrow">{escape(business_label)} · {escape(location)}</p>
-<h2>{'Clear dead branches. Let the light in.' if is_tree else escape(content['intro_title'])}</h2><p>{escape(content['intro'])}</p></div></section>
-{issue_section}
+<section id="about" class="about scroll-reveal{text_only}">{about_photo}<div class="about-copy"><p class="eyebrow">ABOUT {escape(name.upper())}</p>
+<h2>{escape(content.get('intro_title') or name)}</h2><p>{escape(content.get('intro') or content.get('subheadline', ''))}</p></div></section>
+{proof_section}
 {services_section}
-{owner_section}
 {gallery_section}
 {reviews_section}
-{tree_notes}
-<section id="contact" class="contact"><p class="eyebrow">YOUR NEXT STEP · {escape(location)}</p><h2>{'What does your property need?' if is_tree else escape(content['cta_title'])}</h2><p>{'Call Brown’s Tree Service for trimming, removal, stump work, or emergency tree and crane service.' if is_tree else escape(content['cta_text'])}</p>
+<section id="contact" class="contact scroll-reveal"><p class="eyebrow">YOUR NEXT STEP{f' · {escape(location)}' if location else ''}</p><h2>{escape(content.get('cta_title') or f'Talk with {name}')}</h2><p>{escape(content.get('cta_text') or (f'Call {phone} to discuss your needs.' if phone else f'Contact {name} to discuss your needs.'))}</p>
 {phone_html}{address_html}{directions}{website_html}</section></main>
 <footer><span>{escape(name)}</span><span>{escape(location)}</span></footer></body></html>"""
-    for section in ("need-section", "owner-note", "field-notes", "reviews", "tree-notes", "contact"):
-        html = html.replace(f'class="{section}"', f'class="{section} scroll-reveal"')
     return html
 
 def generate_website(handoff_path):

@@ -313,7 +313,7 @@ function watchLandingPage(jobId){
                 selectedLead.demo_ready=true;selectedLead.demo_url=job.preview_url;selectedLead.download_url=job.download_url;
                 $("generate-demo").disabled=false;$("regenerate-demo").disabled=false;$("open-preview").disabled=false;$("download-demo").disabled=false;
                 $("preview-frame").src=job.preview_url+"?t="+Date.now();
-                $("demo-status").textContent="Landing page ready.";
+                $("demo-status").textContent=job.message||"Landing page ready.";
                 await loadLeads();
             }else if(job.status==="error"){
                 clearInterval(demoTimer);$("generate-demo").disabled=false;$("demo-status").textContent=job.message||"Landing page generation failed.";
@@ -508,12 +508,13 @@ def resolve_client(priority, name):
 def run_landing_page(job_id, client_folder):
     try:
         update_job(job_id, status="running", message="DeepSeek is generating the landing page...")
-        run_pipeline(client_folder)
+        quality_status = run_pipeline(client_folder)
         website = client_folder / "website" / "index.html"
         if not website.exists():
             raise RuntimeError("Pipeline finished without creating website/index.html.")
         relative = client_folder.relative_to(ROOT).as_posix()
-        update_job(job_id, status="complete", message="Landing page ready.", preview_url="/demo/" + relative, download_url="/download-demo/" + relative)
+        message = "Landing page ready." if quality_status == "PASS" else "Preview ready; quality review is needed before delivery."
+        update_job(job_id, status="complete", message=message, quality_status=quality_status, preview_url="/demo/" + relative, download_url="/download-demo/" + relative)
     except Exception as error:
         update_job(job_id, status="error", message=str(error))
 

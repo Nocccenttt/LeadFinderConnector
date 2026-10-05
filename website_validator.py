@@ -99,7 +99,7 @@ def validate(client_folder):
             )
 
 
-        if client_name.lower() not in html.lower():
+        if client_name.casefold() not in soup.get_text(" ", strip=True).casefold():
 
             issues.append(
                 "Business name missing"
@@ -142,7 +142,8 @@ def validate(client_folder):
 
     report["status"] = (
         "PASS"
-        if report["checks"]["html"]["status"] == "PASS"
+        if all(value == "PASS" for key, value in report["checks"].items() if key != "html")
+        and report["checks"]["html"]["status"] == "PASS"
         and not report["warnings"]
         else "NEEDS REVIEW"
     )
