@@ -119,10 +119,14 @@ class BusinessPageParser(HTMLParser):
         self.headings = []
         self.heading = None
         self.links = []
+        self.link_texts = []
+        self.current_link = None
         self.images = []
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        if tag in {"a", "article", "h1", "h2", "h3", "h4", "li", "p", "section"}:
+            self.text.append("\n")
         if tag in ("script", "style", "noscript", "svg"):
             self.skip += 1
         if tag == "title":
@@ -133,8 +137,10 @@ class BusinessPageParser(HTMLParser):
             self.heading = [tag, []]
         if tag == "a" and attrs.get("href"):
             self.links.append(attrs["href"])
-        if tag == "img" and attrs.get("src"):
-            self.images.append({"src": attrs["src"], "alt": attrs.get("alt", "")[:120]})
+            self.current_link = []
+        image_src = attrs.get("src") or attrs.get("data-src") or attrs.get("data-dm-image-path")
+        if tag == "img" and image_src:
+            self.images.append({"src": image_src, "alt": attrs.get("alt", "")[:120]})
 
     def handle_data(self, data):
         if self.skip:
@@ -143,11 +149,20 @@ class BusinessPageParser(HTMLParser):
         if self.in_title and clean:
             self.title.append(clean)
         if clean:
-            self.text.append(clean)
+            self.text.append(clean + " ")
+            if self.current_link is not None:
+                self.current_link.append(clean)
             if self.heading is not None:
                 self.heading[1].append(clean)
 
     def handle_endtag(self, tag):
+        if tag == "a" and self.current_link is not None:
+            label = " ".join(self.current_link)
+            if label:
+                self.link_texts.append(label[:120])
+            self.current_link = None
+        if tag in {"a", "article", "h1", "h2", "h3", "h4", "li", "p", "section"}:
+            self.text.append("\n")
         if tag in ("script", "style", "noscript", "svg") and self.skip:
             self.skip -= 1
         if tag == "title":
@@ -159,23 +174,41 @@ class BusinessPageParser(HTMLParser):
             self.heading = None
 
 
-def find_tree_services(business_name, text):
-    if "tree" not in business_name:
-        return {}
-    patterns = (
+def find_business_services(business_name, text):
+    if "tree" in business_name:
+        patterns = (
         ("Emergency Tree & Crane Services", r"\bemergency\b.{0,80}\b(?:tree|crane)"),
         ("Tree Removal Services", r"\btree removal\b"),
         ("Tree Trimming", r"\btrim(?:ming)?\b"),
         ("Tree Pruning", r"\bprun(?:e|ing)\b"),
         ("Stump Grinding & Removal Services", r"\bstump grind(?:ing)?\b"),
         ("Local Wood Chip Deliveries", r"\bwood chips?\b.{0,60}\bdeliver"),
-    )
-    sentences = re.split(r"(?<=[.!?])\s+", text)
+        )
+    else:
+        patterns = ()
+    sentences = re.split(r"(?<=[.!?])\s+|\s*[\r\n]+\s*", text)
     found = {}
     for label, pattern in patterns:
         matches = [sentence for sentence in sentences if re.search(pattern, sentence, re.I)]
         if matches:
             found[label] = " ".join(dict.fromkeys(matches))[:280]
+    if "tree" not in business_name:
+        service_phrase = re.compile(r"\b(?:[a-z0-9&/-]+\s+){0,3}(?:services?|repairs?|installations?|replacements?|cleaning|testing|inspections?|maintenance|pumps?|lines?|jetting|repiping|heaters?|pipes?|plumbing)\b", re.I)
+        for sentence in sentences:
+            if len(sentence) > 100:
+                continue
+            for match in service_phrase.finditer(sentence):
+                words = re.sub(r"\s+", " ", match.group()).strip(" ,.-").split()
+                verbs = {"provides", "provide", "offers", "offer", "including", "include", "contact", "book", "call", "and", "or", "with", "you", "we", "need", "turn", "not", "a", "our", "either", "on", "see", "all", "residential", "require", "requires", "fails", "failed", "if", "pass", "restore", "assembly", "handles", "handle"}
+                if any(word.lower() in verbs for word in words):
+                    words = words[max(i for i, word in enumerate(words) if word.lower() in verbs) + 1:]
+                label = " ".join(words).title()
+                if not label or label.lower() in {"service", "services", "repair", "repairs", "installation", "inspection", "our services", "reviews blog our services", "emergency services", "commercial services", "residential services"} or label.lower().endswith(" emergency services"):
+                    continue
+                canonical = re.sub(r"\b(certified|residential|commercial|local)\b", "", label.lower()).strip()
+                if any(re.sub(r"\b(certified|residential|commercial|local)\b", "", old.lower()).strip() == canonical for old in found):
+                    continue
+                found.setdefault(label, sentence[:280])
     return found
 
 
@@ -194,9 +227,9 @@ def research_business(business):
         f"https://www.{host}{base_path}",
         f"http://{host}{base_path}",
     )))
-    pages, services, images, errors, seen = [], [], [], [], set()
+    pages, services, images, errors, seen, seen_pages = [], [], [], [], set(), set()
     business_name = re.sub(r"[^a-z0-9]+", "", str(business.get("business_name", "")).lower())
-    service_pattern = re.compile(r"\b(?:tree|stump|crane|wood chip|emergency).*(?:service|delivery|removal|trimming|pruning|grinding|crane)\b", re.I)
+    service_pattern = re.compile(r"\b(?:tree|stump|crane|wood chip|emergency|plumb|drain|water heater|backflow|pump|gas line|pipe|repair|installation|cleaning|testing).*(?:service|delivery|removal|trimming|pruning|grinding|crane|repair|install|cleaning|testing|pump|line)\b", re.I)
     non_service_pattern = re.compile(r"\b(testimonials?|reviews?|about|contact|gallery)\b", re.I)
     service_details = {}
 
@@ -206,7 +239,8 @@ def research_business(business):
             continue
         seen.add(url)
         try:
-            html, final_url = fetch_page(url, limit=800_000, timeout=12)
+            # ponytail: cap each business page at 2 MB; this site's homepage is about 1.4 MB.
+            html, final_url = fetch_page(url, limit=2_000_000, timeout=12)
         except HTTPError as error:
             errors.append({"type": "HTTPError", "status": error.code})
             continue
@@ -216,24 +250,26 @@ def research_business(business):
             continue
         page = BusinessPageParser()
         page.feed(html)
+        page_key = final_url.split("?", 1)[0].rstrip("/").lower()
+        if page_key in seen_pages:
+            continue
+        seen.add(final_url)
+        seen_pages.add(page_key)
+        page_text = re.sub(r"\n+", "\n", re.sub(r"[ \t]+", " ", "".join(page.text))).strip()
         pages.append({
             "url": final_url,
             "title": " ".join(page.title)[:160],
             "description": page.description,
             "headings": page.headings[:24],
-            "text": " ".join(page.text)[:2600],
+            "text": page_text[:3500],
         })
-        if "tree" not in business_name:
-            services.extend(heading for heading in page.headings
-                            if service_pattern.search(heading) and not non_service_pattern.search(heading)
-                            and (not business_name or business_name not in re.sub(r"[^a-z0-9]+", "", heading.lower())))
-        details = find_tree_services(business_name, pages[-1]["text"])
+        service_text = pages[-1]["text"] if "tree" in business_name else "\n".join(page.link_texts)
+        details = find_business_services(business_name, service_text)
         services.extend(details)
         service_details.update(details)
         for image in page.images:
             image_url = urljoin(final_url, image["src"])
-            image_host = (urlparse(image_url).hostname or "").removeprefix("www.")
-            if image_host == host and not re.search(r"logo|icon|badge|star|facebook|google", image["src"] + image["alt"], re.I) and image_url not in {item["url"] for item in images}:
+            if image_url.startswith(("https://", "http://")) and not re.search(r"logo|icon|badge|star|facebook|google", image["src"] + image["alt"], re.I) and image_url not in {item["url"] for item in images}:
                 images.append({"url": image_url, "alt": image["alt"]})
         candidates = []
         for link in page.links:
@@ -242,7 +278,7 @@ def research_business(business):
             if parts.scheme not in ("http", "https") or (parts.hostname or "").removeprefix("www.") != host or candidate in seen:
                 continue
             path = parts.path.lower()
-            score = sum(word in path for word in ("service", "tree", "about", "emergency", "contact", "stump", "crane"))
+            score = sum(word in path for word in ("service", "tree", "about", "emergency", "contact", "stump", "crane", "residential", "commercial", "backflow", "plumb", "drain", "water", "heater"))
             if score:
                 candidates.append((score, candidate))
         queue.extend(url for _, url in sorted(set(candidates), reverse=True))
@@ -258,7 +294,7 @@ def research_business(business):
             pages.append({"url": result["url"], "title": result["title"], "description": result.get("description", ""), "headings": [result["title"]], "text": text[:1800], "source_type": "first-party search result"})
             if "tree" not in business_name and service_pattern.search(result["title"]) and not non_service_pattern.search(result["title"]):
                 services.append(result["title"])
-            details = find_tree_services(business_name, text)
+            details = find_business_services(business_name, text)
             services.extend(details)
             service_details.update(details)
         errors.append({"type": "TavilySearch", "reason": search_error} if search_error else {"type": "TavilySearch", "results": len(pages)})
@@ -266,7 +302,7 @@ def research_business(business):
     return {
         "business_website": website,
         "pages": pages,
-        "services": list(dict.fromkeys(services))[:12],
+        "services": list(dict.fromkeys(services))[:15],
         "service_details": service_details,
         "images": images[:12],
         "fetch_errors": errors[:8],
@@ -313,14 +349,7 @@ def load_or_research_business(handoff_path, business):
     path = Path(handoff_path).parent / "business_research.json"
     try:
         saved = load_json(path)
-        if saved.get("business_website") == business.get("website") and saved.get("pages"):
-            names = re.sub(r"[^a-z0-9]+", "", str(business.get("business_name", "")).lower())
-            for page in saved["pages"]:
-                details = find_tree_services(names, page.get("text", ""))
-                saved.setdefault("service_details", {}).update(details)
-                saved.setdefault("services", []).extend(details)
-            saved["services"] = list(dict.fromkeys(saved.get("services", [])))
-            path.write_text(json.dumps(saved, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        if saved.get("business_website") == business.get("website") and saved.get("pages") and saved.get("services") and not all(page.get("source_type") == "first-party search result" for page in saved["pages"]):
             return saved
     except (OSError, json.JSONDecodeError, AttributeError):
         pass
@@ -791,12 +820,14 @@ def verified_business_content(business, generated, research):
         {"name": next(title for title in research["services"] if normalize(title) == normalize(item["name"])), "description": str(item.get("description", ""))[:280]}
         for item in (generated_services[:4] if isinstance(generated_services, list) else [])
         if isinstance(item, dict) and normalize(item.get("name", "")) in allowed
+        and len(normalize(item.get("description", ""))) > len(normalize(item.get("name", ""))) + 12
     ]
     included = {normalize(item["name"]) for item in content["services"]}
     content["services"].extend(
         {"name": name, "description": str(research.get("service_details", {}).get(name, ""))[:280]}
         for name in research.get("services", [])
         if normalize(name) not in included and research.get("service_details", {}).get(name)
+        and len(normalize(research["service_details"][name])) > len(normalize(name)) + 12
     )
     content["services"] = content["services"][:6]
     content["proof_points"] = [
