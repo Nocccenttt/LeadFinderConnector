@@ -48,7 +48,10 @@ REM --------------------------------------------
 if not exist ".env" (
     echo ERROR: .env file was not found.
     echo.
-    echo Put your .env file in this folder:
+    echo Copy .env.example to .env and enter your API keys.
+    echo Keep .env private; it is excluded from Git.
+    echo.
+    echo Project folder:
     echo %CD%
     echo.
     pause
