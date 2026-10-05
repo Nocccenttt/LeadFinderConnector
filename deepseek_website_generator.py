@@ -348,11 +348,12 @@ def fetch_page(url, limit=1_500_000, timeout=25):
         return body.decode(response.headers.get_content_charset() or "utf-8", "replace"), response.geturl()
 
 
-def discover_reference():
+def discover_reference(reference_index=0):
     gallery_html, _ = fetch_page(ADMIRE_URL)
     gallery = GalleryParser()
     gallery.feed(gallery_html)
     ignored_hosts = {"admiretheweb.com", "instagram.com", "facebook.com", "x.com", "twitter.com", "google.com", "feedburner.com", "linkedin.com", "pinterest.com", "youtube.com", "tiktok.com"}
+    references = []
     for item in gallery.items:
         detail_html, detail_url = fetch_page(urljoin(ADMIRE_URL, item["url"]))
         links = LinkParser()
@@ -362,8 +363,11 @@ def discover_reference():
             parsed = urlparse(candidate)
             host = (parsed.hostname or "").lower().removeprefix("www.")
             if parsed.scheme in ("http", "https") and host and not any(host == blocked or host.endswith("." + blocked) for blocked in ignored_hosts) and not parsed.path.startswith("/intent/"):
-                return {"name": item["name"] or host, "url": candidate}
-    raise RuntimeError("Admire The Web returned no submitted-site URLs in its .c-item entries.")
+                references.append({"name": item["name"] or host, "url": candidate})
+                break
+        if len(references) > reference_index:
+            return references[reference_index]
+    raise RuntimeError(f"Admire The Web has no submitted website at reference index {reference_index}.")
 
 
 class LinkParser(HTMLParser):
@@ -403,7 +407,7 @@ def analyze_reference(reference):
     }
 
 
-DESIGN_DIRECTOR_PROMPT = """Create an original, implementable design_spec for Brown's Tree Service from the supplied facts and reference_analysis. Transfer visual principles only; copy no brand, text, or assets; invent no business claims. Return only JSON with exactly these keys: layout, header, hero, typography, palette, spacing, components, imagery, section_composition, visual_hierarchy. Keep each text value to 8 words maximum; palette is an array of up to 5 CSS colors."""
+DESIGN_DIRECTOR_PROMPT = """Create an original, implementable design_spec for the supplied business using the supplied reference_analysis. Transfer visual principles only; copy no brand, text, or assets; invent no business claims. Return only JSON with exactly these keys: layout, header, hero, typography, palette, spacing, components, imagery, section_composition, visual_hierarchy. Keep each text value to 8 words maximum; palette is an array of up to 5 CSS colors."""
 
 
 def create_design_spec(business, reference, analysis):
@@ -438,13 +442,13 @@ def create_design_spec(business, reference, analysis):
     return spec, response.usage
 
 
-def generate_reference_analysis(handoff_path):
+def generate_reference_analysis(handoff_path, reference_index=0):
     handoff_path = Path(handoff_path)
     business = load_json(handoff_path.parent / "business.json")
-    reference = discover_reference()
+    reference = discover_reference(reference_index)
     analysis = analyze_reference(reference)
     spec, usage = create_design_spec(business, reference, analysis)
-    artifact = {"business": business.get("business_name") or "Brown's Tree Service", "reference": reference, "reference_analysis": analysis, "design_spec": spec}
+    artifact = {"business": business.get("business_name") or "Local Business", "reference": reference, "reference_analysis": analysis, "design_spec": spec}
     output = handoff_path.parent / "reference_analysis.json"
     output.write_text(json.dumps(artifact, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     try:
@@ -1018,11 +1022,19 @@ if __name__ == "__main__":
         action="store_true",
         help="Crawl the supplied business website and save findings without using DeepSeek.",
     )
+    parser.add_argument(
+        "--reference-index",
+        type=int,
+        default=0,
+        help="Choose a different Admire The Web submission (0 is the first).",
+    )
 
     args = parser.parse_args()
 
     if args.reference_analysis_only:
-        result, label = generate_reference_analysis(args.ai_handoff), "Reference analysis saved"
+        if args.reference_index < 0:
+            parser.error("--reference-index must be 0 or greater")
+        result, label = generate_reference_analysis(args.ai_handoff, args.reference_index), "Reference analysis saved"
     elif args.research_only:
         result, label = generate_research_only(args.ai_handoff), "Business research saved"
     elif args.content_only:
