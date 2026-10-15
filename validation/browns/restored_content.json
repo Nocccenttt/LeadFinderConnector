@@ -1,0 +1,41 @@
+{
+  "business_name": "Brown's Tree Service",
+  "research_sources": ["https://brownstreeserviceofraleigh.com/"],
+  "source_note": "Services and owner/operator information recovered from the indexed first-party homepage on 15 October 2026. Original draft's section coverage restored with new paraphrased copy. No copied reviews or unverified credentials.",
+  "eyebrow": "Tree care in Raleigh, North Carolina",
+  "headline": "Your trees.\nOur calling.",
+  "subheadline": "Tree removal, thoughtful pruning, and help after the storm. Local tree care, with a person you can call.",
+  "intro_title": "Local knowledge.\nCareful work.",
+  "intro": "Brown's Tree Service is based in Raleigh. Owner/operator Craig Brown gives estimates and works on site, keeping the conversation close to the people doing the work. From a crowded canopy to a fallen tree, start by telling the team what your property needs.",
+  "facts": [
+    {"value": "Raleigh, NC", "label": "Locally based"},
+    {"value": "Craig Brown", "label": "Owner/operator"},
+    {"value": "(919) 845-6222", "label": "Speak with the team"}
+  ],
+  "services_title": "A little pruning.\nA bigger plan.",
+  "services_intro": "Every tree and property is different. Here are the services you can discuss with Brown's.",
+  "services": [
+    {"name": "Tree removal", "description": "Removal of small and large trees, with attention to nearby homes and landscaping."},
+    {"name": "Trimming & pruning", "description": "Manage dead branches, open up light, and shape a healthier canopy."},
+    {"name": "Storm & emergency work", "description": "Emergency tree and crane services for storm damage and urgent situations."},
+    {"name": "Stump removal", "description": "Stump grinding and removal to make space for what comes next."},
+    {"name": "Wood-chip delivery", "description": "Ask about local deliveries of mixed wood chips for your property."}
+  ],
+  "proof_points": [],
+  "process_title": "It starts with\na conversation.",
+  "process": [
+    {"title": "Tell us about the tree", "text": "Call with your location and a description of the work you have in mind."},
+    {"title": "Discuss the next step", "text": "Ask about an estimate, access to the property, and timing."},
+    {"title": "Agree on the details", "text": "Confirm the scope of work directly with Brown's before making arrangements."}
+  ],
+  "faq_title": "Before you call.",
+  "faq": [
+    {"question": "Can I ask about both pruning and removal?", "answer": "Yes. Brown's lists trimming, pruning, and tree removal among its services."},
+    {"question": "How do I arrange an estimate?", "answer": "Call (919) 845-6222 to discuss your property and ask about an owner/operator estimate."},
+    {"question": "What if a storm has damaged a tree?", "answer": "Brown's offers emergency tree and crane services. Call directly to discuss the situation and current availability."},
+    {"question": "Is my property in the service area?", "answer": "The business is based in Raleigh. Share your address when you call to confirm service for your location."}
+  ],
+  "cta_title": "Let’s give your trees\nsome attention.",
+  "cta_text": "A question, a fallen branch, a bigger job. Call Brown's and talk through the next step.",
+  "content_gaps": ["No current pricing, certificates, guarantees, or review statistics asserted."]
+}

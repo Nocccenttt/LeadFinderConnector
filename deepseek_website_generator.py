@@ -714,6 +714,7 @@ def create_design_spec(business, reference, analysis, handoff=None, research=Non
         "business_brand_palette": (research or {}).get("brand_palette", {}),
         "verified_services": (research or {}).get("services", []),
         "verified_reviews": bool((research or {}).get("testimonials")),
+        "supplied_content": (research or {}).get("supplied_content"),
         "seo_requirements": (handoff or {}).get("website_build", {}),
         "reference_analysis": analysis,
         "token_schema": schema,
@@ -746,12 +747,18 @@ def create_design_spec(business, reference, analysis, handoff=None, research=Non
     return spec, response.usage
 
 
-def generate_design_spec(handoff_path, handoff_only=False):
+def generate_design_spec(handoff_path, handoff_only=False, content_file=None):
     handoff_path = Path(handoff_path)
     handoff = load_json(handoff_path)
     business = load_json(handoff_path.parent / "business.json")
     analysis = load_json(handoff_path.parent / "reference_analysis.json")
-    research = {} if handoff_only else load_or_research_business(handoff_path, business)
+    if content_file and handoff_only:
+        raise ValueError("--content-file and --handoff-only cannot be combined.")
+    if content_file:
+        supplied = load_source_content(content_file, business)
+        research = {"services": [item["name"] for item in supplied.get("services", [])], "faq": supplied.get("faq", []), "process": supplied.get("process", []), "supplied_content": supplied}
+    else:
+        research = {} if handoff_only else load_or_research_business(handoff_path, business)
     spec, usage = create_design_spec(business, analysis["reference"], analysis, handoff, research, handoff_path.parent)
     output = handoff_path.parent / "design_spec.json"
     output.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -808,16 +815,19 @@ a:focus-visible,summary:focus-visible { outline:3px solid currentColor; outline-
 p { max-width:65ch; }
 h1,h2,h3 { font-family:var(--heading-font); font-weight:var(--heading-weight); line-height:var(--heading-leading); letter-spacing:-.025em; text-transform:__HEADING_CASE__; text-wrap:balance; overflow-wrap:break-word; }
 h1 { margin:0; font-size:clamp(__MOBILE_HEADING__px,6vw,__HEADING_SIZE__px); }
+h1,h2 { white-space:pre-line; }
 h2 { margin:0 0 24px; font-size:clamp(30px,4vw,calc(__HEADING_SIZE__px * .7)); }
 h3 { margin:0 0 12px; font-size:clamp(22px,2.4vw,32px); }
 section[id] { scroll-margin-top:100px; }
-.site-header { position:__HEADER_POSITION__; top:0; z-index:10; display:flex; align-items:center; justify-content:space-between; gap:var(--gap); padding:22px max(var(--gutter),calc((100% - var(--max))/2)); background:var(--bg); color:var(--text); border-bottom:1px solid var(--line); }
+.site-header { position:__HEADER_POSITION__; top:0; z-index:10; display:flex; align-items:center; justify-content:space-between; gap:var(--gap); padding:12px max(var(--gutter),calc((100% - var(--max))/2)); background:var(--bg); color:var(--text); border-bottom:1px solid var(--line); }
 .brand { font-family:var(--heading-font); font-weight:700; font-size:20px; line-height:1.2; max-width:24ch; }
 .site-header nav { display:flex; align-items:center; gap:24px; font-size:16px; }
 .site-header nav a:not(.nav-call) { text-decoration:underline; text-decoration-color:transparent; text-underline-offset:6px; }
 .site-header nav a:hover { text-decoration-color:currentColor; }
 .nav-call,.button { display:inline-flex; align-items:center; justify-content:center; padding:14px 24px; min-height:48px; border:1px solid var(--accent); border-radius:var(--radius); background:var(--accent); color:var(--on-accent); font-family:var(--body-font); font-size:16px; font-weight:700; line-height:1.3; transition:transform var(--duration) ease,opacity var(--duration) ease; }
 .button { margin-top:24px; }
+.button:active,.nav-call:active { transform:translateY(1px); }
+.hero-secondary { display:inline-block; margin:24px 0 0 24px; font-size:15px; text-decoration:underline; text-underline-offset:5px; }
 .button:hover,.nav-call:hover { opacity:.9; }
 [data-button="outline"] .button,[data-button="outline"] .nav-call { background:transparent; color:inherit; border-color:currentColor; }
 .mobile-nav { display:none; position:relative; }
@@ -845,9 +855,12 @@ section[id] { scroll-margin-top:100px; }
 [data-hero="full-bleed"] .hero-copy { padding:24px; background:rgba(0,0,0,__TEXT_PANEL__); }
 [data-hero="full-bleed"] .hero-credit { position:absolute; bottom:16px; right:var(--gutter); padding:6px 10px; background:rgba(0,0,0,.75); }
 [data-hero="split"] .hero { grid-template-columns:minmax(0,1.2fr) minmax(0,.8fr); }
-[data-hero="split"] .hero-image { grid-column:2; grid-row:1; height:100%; min-height:420px; }
+[data-hero="split"] .hero { padding-block:48px 64px; gap:48px; }
+[data-hero="split"] .hero-image { grid-column:2; grid-row:1; height:100%; min-height:480px; max-height:580px; }
 [data-hero="split"] .hero-copy { grid-column:1; grid-row:1; max-width:100%; }
-[data-hero="split"] .hero-credit { grid-column:2; }
+[data-hero="split"] .hero-copy h1 { font-size:clamp(__MOBILE_HEADING__px,6vw,__HEADING_SIZE__px); letter-spacing:-.065em; }
+[data-hero="split"] .hero-copy .lead { max-width:38ch; margin-top:32px; font-size:19px; }
+[data-hero="split"] .hero-credit { grid-column:2; margin-top:-38px; margin-right:12px; padding:7px 10px; color:#fff; background:rgba(0,0,0,.75); justify-self:end; z-index:1; }
 [data-hero="editorial"] .hero-image { grid-row:2; height:480px; }
 [data-hero="editorial"] .hero { padding-top:calc(var(--section) * .8); }
 [data-hero="contained"] .hero { max-width:var(--max); margin:auto; padding:var(--section) var(--gutter); }
@@ -881,6 +894,22 @@ section[id] { scroll-margin-top:100px; }
 [data-cards="filled"] article,[data-cards="filled"] blockquote { padding:32px; border-radius:var(--radius); background:var(--surface); color:var(--text); }
 [data-cards="none"] article,[data-cards="none"] blockquote { border:0; padding:0; background:transparent; }
 .service-heading { margin-bottom:var(--gap); }
+.service-heading > p { max-width:48ch; }
+.services.composition-rows .service-grid { gap:0; }
+.services.composition-rows .service-grid article { display:grid; grid-template-columns:56px minmax(0,.8fr) minmax(0,1.2fr); align-items:baseline; column-gap:24px; padding:28px 0; border-top:1px solid var(--line); }
+.services.composition-rows .service-grid article .eyebrow { margin:0; font-size:13px; }
+.services.composition-rows .service-grid h3 { font-size:clamp(24px,2.4vw,34px); letter-spacing:-.035em; }
+.services.composition-rows .service-grid p { max-width:45ch; font-size:16px; }
+.about-copy > p { max-width:42ch; }
+.process-list { padding:0; list-style:none; counter-reset:steps; }
+.process-list > li { border-top:1px solid var(--line); padding-top:24px; counter-increment:steps; }
+.process-list > li:before { content:"0" counter(steps); display:block; font-size:13px; margin-bottom:32px; }
+.process-list > li p { font-size:16px; }
+.process > h2 { max-width:15ch; margin-bottom:48px; }
+.faq { border-top:1px solid var(--line); }
+.faq > h2 { max-width:16ch; }
+.faq-list { max-width:860px; margin-left:auto; }
+.faq details p { max-width:57ch; font-size:16px; padding-top:12px; }
 .service-grid p,.need-grid p { margin:0; }
 .photo-grid figure { margin:0; min-width:0; }
 .photo-grid img { width:100%; height:360px; object-fit:cover; border-radius:var(--radius); }
@@ -889,7 +918,11 @@ blockquote { margin:0; font-size:24px; line-height:1.4; }
 blockquote cite { display:block; margin-top:24px; font-size:14px; }
 .contact > a:not(.button),.local a { display:block; margin-top:16px; text-decoration:underline; }
 .contact.composition-split,.local.composition-split { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,.6fr); gap:var(--gap); }
+.contact.composition-split > h2 { grid-column:1 / -1; max-width:18ch; }
 .contact.composition-split .eyebrow,.contact.composition-split > a,.contact.composition-split .address { grid-column:1 / -1; }
+.contact.composition-split .button { justify-self:start; grid-column:2; grid-row:2; margin:0; }
+.contact.composition-split > p { margin:0; }
+.contact .address { font-size:14px; }
 .local.composition-split .eyebrow { grid-column:1 / -1; }
 .local.composition-split .directions { grid-column:2; }
 .faq details { border-top:1px solid var(--line); padding:24px 0; }
@@ -916,7 +949,11 @@ footer { padding:32px max(var(--gutter),calc((100% - var(--max))/2)); display:fl
   [data-hero="split"] .hero { grid-template-columns:1fr; }
   [data-hero="split"] .hero-copy,[data-hero="split"] .hero-image,[data-hero="split"] .hero-credit { grid-column:auto; grid-row:auto; }
   [data-hero="split"] .hero-copy { order:__COPY_ORDER__; }
-  [data-hero="split"] .hero-image { order:__IMAGE_ORDER__; min-height:0; }
+  [data-hero="split"] .hero-image { order:__IMAGE_ORDER__; min-height:0; height:__MOBILE_IMAGE__px; }
+  [data-hero="split"] .hero-credit { order:3; margin-top:-38px; }
+  [data-hero="split"] .hero { gap:32px; padding-top:40px; }
+  [data-hero="split"] .hero-copy h1 { font-size:__MOBILE_HEADING__px; }
+  .hero-secondary { margin-left:16px; font-size:14px; }
   .hero-image,[data-hero="editorial"] .hero-image,.about-image,.photo-grid img { height:__MOBILE_IMAGE__px; }
   [data-hero="full-bleed"] .hero-image { height:100%; }
   .about,.composition-overlap.about:not(.text-only),.composition-feature.about,[data-composition="asymmetric"] .about { grid-template-columns:1fr; }
@@ -925,6 +962,11 @@ footer { padding:32px max(var(--gutter),calc((100% - var(--max))/2)); display:fl
   .composition-overlap .about-copy { margin:0; padding:0; }
   .service-grid,.need-grid,.review-grid,.photo-grid,.process-list,.composition-split .service-grid,.composition-split .need-grid,.composition-split .review-grid,.composition-split .photo-grid,.composition-split .process-list,.contact.composition-split,.local.composition-split,.facts.composition-grid { grid-template-columns:1fr; }
   .local.composition-split .directions { grid-column:1; }
+  .contact.composition-split .button { grid-column:1; grid-row:auto; }
+  .services.composition-rows .service-grid article { grid-template-columns:32px minmax(0,1fr); gap:0 16px; padding:24px 0; }
+  .services.composition-rows .service-grid article p { grid-column:2; }
+  .process-list { gap:32px; }
+  .process-list > li:before { margin-bottom:20px; }
   [data-composition="asymmetric"] .service-heading,[data-composition="asymmetric"] .need-section > h2 { margin-left:0; max-width:none; }
   footer { flex-direction:column; }
 }
@@ -1174,6 +1216,11 @@ def verified_business_content(business, generated, research):
 
 def generate_content_only(handoff_path, handoff_only=False):
     handoff_path = Path(handoff_path)
+    existing_path = handoff_path.parent / "business_content.json"
+    if existing_path.exists() and load_json(existing_path).get("source_mode") == "supplied source-backed content":
+        if handoff_only:
+            raise ValueError("Refusing to replace supplied content with contact-only copy.")
+        return existing_path
     handoff = load_json(handoff_path)
     business_path = handoff_path.parent / "business.json"
     if not business_path.exists():
@@ -1216,9 +1263,10 @@ def build_html(business, content, design_spec=None, research=None):
     phone_html = phone_link(phone)
     address_html = f'<p class="address">{escape(str(address))}</p>' if address else ""
     directions = f'<a class="directions" href="https://maps.google.com/?{urlencode({"q": address})}" target="_blank" rel="noopener">Get directions ↗</a>' if address else ""
+    fact_items = [(str(item["value"]), str(item["label"])) for item in content.get("facts", []) if isinstance(item, dict) and item.get("value") and item.get("label")]
     facts = "".join(
-        f'<div><strong>{escape(value)}</strong><span>{label}</span></div>'
-        for value, label in ((name, "Business"), (location, "Location"), (str(phone), "Call directly ↗")) if value
+        f'<div><strong>{escape(value)}</strong><span>{escape(label)}</span></div>'
+        for value, label in (fact_items or ((name, "Business"), (location, "Location"), (str(phone), "Call directly ↗"))) if value
     )
 
     services = [item for item in content.get("services", []) if isinstance(item, dict) and item.get("name")]
@@ -1227,8 +1275,9 @@ def build_html(business, content, design_spec=None, research=None):
         f'<p>{escape(str(item.get("description", "")))}</p></article>'
         for index, item in enumerate(services, 1)
     )
-    services_title = "How we can help"
-    services_section = f'<section id="services" class="services scroll-reveal"><div class="service-heading"><p class="eyebrow">SERVICES</p><h2>{services_title}</h2></div><div class="service-grid">{service_html}</div></section>' if service_html else ""
+    services_title = escape(content.get("services_title") or "How we can help")
+    services_intro = f'<p>{escape(content["services_intro"])}</p>' if content.get("services_intro") else ""
+    services_section = f'<section id="services" class="services scroll-reveal"><div class="service-heading"><h2>{services_title}</h2>{services_intro}</div><div class="service-grid">{service_html}</div></section>' if service_html else ""
     proof_points = [item for item in content.get("proof_points", []) if isinstance(item, dict) and item.get("title") and item.get("text")]
     proof_html = "".join(f'<article><p class="eyebrow">{index:02d}</p><h3>{escape(str(item["title"]))}</h3><p>{escape(str(item["text"]))}</p></article>' for index, item in enumerate(proof_points, 1))
     proof_section = f'<section class="need-section scroll-reveal"><p class="eyebrow">WHY PEOPLE CALL</p><h2>The details that matter.</h2><div class="need-grid">{proof_html}</div></section>' if proof_html else ""
@@ -1257,19 +1306,20 @@ def build_html(business, content, design_spec=None, research=None):
     review_link = f'<a href="{escape(reviews_url, quote=True)}" target="_blank" rel="noopener">Read more customer stories ↗</a>' if reviews_url.startswith(("https://", "http://")) else ""
     reviews_section = f'<section class="reviews scroll-reveal"><p class="eyebrow">CUSTOMER FEEDBACK</p><h2>From people who know their work.</h2><div class="review-grid">{review_cards}</div>{review_link}</section>' if review_cards else ""
     text_only = " text-only" if not about_photo else ""
-    faq_items = research.get("faq", [])
+    faq_items = content.get("faq", research.get("faq", []))
     faq_html = "".join(f'<details><summary>{escape(str(item["question"]))}</summary><p>{escape(str(item["answer"]))}</p></details>' for item in faq_items if isinstance(item, dict) and item.get("question") and item.get("answer"))
-    process_items = research.get("process", [])
+    process_items = content.get("process", research.get("process", []))
     process_html = "".join(f'<li><h3>{escape(str(item["title"]))}</h3><p>{escape(str(item["text"]))}</p></li>' for item in process_items if isinstance(item, dict) and item.get("title") and item.get("text"))
+    hero_secondary = '<a class="hero-secondary" href="#services">Explore our services ↗</a>' if services else ""
     sections = {
-        "hero": f'<section id="hero" class="hero">{hero_image}<div class="hero-copy"><p class="eyebrow">{escape(name)}{f" · {escape(location)}" if location else ""}</p><h1>{escape(content.get("headline") or name)}</h1><p class="lead">{escape(content.get("subheadline") or content.get("intro", ""))}</p>{phone_html}</div>{hero_credit}</section>',
+        "hero": f'<section id="hero" class="hero">{hero_image}<div class="hero-copy"><p class="eyebrow">{escape(content.get("eyebrow") or location or name)}</p><h1>{escape(content.get("headline") or name)}</h1><p class="lead">{escape(content.get("subheadline") or content.get("intro", ""))}</p>{phone_html}{hero_secondary}</div>{hero_credit}</section>',
         "facts": f'<section id="facts" class="facts" aria-label="Business details">{facts}</section>',
-        "about": f'<section id="about" class="about scroll-reveal{text_only}">{about_photo}<div class="about-copy"><p class="eyebrow">ABOUT {escape(name.upper())}</p><h2>{escape(content.get("intro_title") or name)}</h2><p>{escape(content.get("intro") or content.get("subheadline", ""))}</p></div></section>',
+        "about": f'<section id="about" class="about scroll-reveal{text_only}">{about_photo}<div class="about-copy"><h2>{escape(content.get("intro_title") or name)}</h2><p>{escape(content.get("intro") or content.get("subheadline", ""))}</p></div></section>',
         "proof": proof_section, "services": services_section, "gallery": gallery_section, "reviews": reviews_section,
-        "local": f'<section id="local" class="local scroll-reveal"><p class="eyebrow">LOCATION</p><h2>{escape(location or "Find us")}</h2>{address_html}{directions}</section>' if address else "",
-        "faq": f'<section id="faq" class="faq scroll-reveal"><h2>Questions and answers</h2>{faq_html}</section>' if faq_html else "",
-        "process": f'<section id="process" class="process scroll-reveal"><h2>How it works</h2><ol class="process-list">{process_html}</ol></section>' if process_html else "",
-        "contact": f'<section id="contact" class="contact scroll-reveal"><p class="eyebrow">YOUR NEXT STEP{f" · {escape(location)}" if location else ""}</p><h2>{escape(content.get("cta_title") or f"Talk with {name}")}</h2><p>{escape(content.get("cta_text") or (f"Call {phone} to discuss your needs." if phone else f"Contact {name} to discuss your needs."))}</p>{phone_html}{address_html}{directions}{website_html}</section>',
+        "local": f'<section id="local" class="local scroll-reveal"><h2>{escape(content.get("local_title") or location or "Find us")}</h2><p>{escape(content.get("local_intro", ""))}</p>{address_html}{directions}</section>' if address else "",
+        "faq": f'<section id="faq" class="faq scroll-reveal"><h2>{escape(content.get("faq_title") or "A few things to know.")}</h2><div class="faq-list">{faq_html}</div></section>' if faq_html else "",
+        "process": f'<section id="process" class="process scroll-reveal"><h2>{escape(content.get("process_title") or "Let’s talk trees.")}</h2><ol class="process-list">{process_html}</ol></section>' if process_html else "",
+        "contact": f'<section id="contact" class="contact scroll-reveal"><h2>{escape(content.get("cta_title") or f"Talk with {name}")}</h2><p>{escape(content.get("cta_text") or (f"Call {phone} to discuss your needs." if phone else f"Contact {name} to discuss your needs."))}</p>{phone_html}{address_html}{directions}</section>',
     }
     rendered_sections = []
     selected = []
@@ -1304,7 +1354,24 @@ def build_html(business, content, design_spec=None, research=None):
 <nav class="desktop-nav" aria-label="Main navigation">{navigation}</nav><details class="mobile-nav"><summary>Menu</summary><nav aria-label="Mobile navigation">{navigation}</nav></details></header>
 <main id="top">{"".join(rendered_sections)}</main><footer><span>{escape(name)}</span><span>{escape(location)}</span></footer></body></html>'''
 
-def generate_website(handoff_path, handoff_only=False, reference_index=None, reference_url=None, rendered=True, refresh_reference=False):
+def load_source_content(path, business):
+    content = load_json(path)
+    if not isinstance(content, dict) or content.get("business_name") != get_business_name(business, {}):
+        raise ValueError("Saved content must identify the exact target business.")
+    for field in ("headline", "subheadline", "intro_title", "intro", "cta_title", "cta_text"):
+        if not isinstance(content.get(field), str) or not content[field].strip():
+            raise ValueError(f"Saved content is missing {field}.")
+    sources = content.get("research_sources")
+    if not isinstance(sources, list) or not sources or any(not isinstance(url, str) or urlparse(url).scheme not in ("http", "https") for url in sources):
+        raise ValueError("Saved content needs explicit source URLs.")
+    for field, keys in (("services", ("name", "description")), ("process", ("title", "text")), ("faq", ("question", "answer")), ("facts", ("value", "label"))):
+        items = content.get(field, [])
+        if not isinstance(items, list) or any(not isinstance(item, dict) or any(not isinstance(item.get(key), str) or not item[key].strip() for key in keys) for item in items):
+            raise ValueError(f"Saved {field} contains incomplete records.")
+    return content
+
+
+def generate_website(handoff_path, handoff_only=False, reference_index=None, reference_url=None, rendered=True, refresh_reference=False, content_file=None):
     handoff_path = Path(handoff_path)
 
     handoff = load_json(handoff_path)
@@ -1321,6 +1388,16 @@ def generate_website(handoff_path, handoff_only=False, reference_index=None, ref
     business = load_json(
         business_path
     )
+    existing_content_path = handoff_path.parent / "business_content.json"
+    if existing_content_path.exists():
+        existing_content = load_json(existing_content_path)
+        if handoff_only and any(existing_content.get(key) for key in ("services", "faq", "process")):
+            raise ValueError("Refusing to overwrite substantive saved content with a contact-only site. Use --content-file or render in a separate handoff directory.")
+        if not content_file and not handoff_only and existing_content.get("source_mode") == "supplied source-backed content":
+            content_file = existing_content_path
+    if content_file and handoff_only:
+        raise ValueError("--content-file and --handoff-only cannot be combined; refusing to discard saved content.")
+    saved_content = load_source_content(content_file, business) if content_file else None
 
     analysis_path = handoff_path.parent / "reference_analysis.json"
     analysis = load_json(analysis_path) if analysis_path.exists() else {}
@@ -1334,25 +1411,30 @@ def generate_website(handoff_path, handoff_only=False, reference_index=None, ref
     design_path = handoff_path.parent / "design_spec.json"
     context_path = handoff_path.parent / "design_context.json"
     context = design_context(business, analysis, handoff_only)
-    if refresh_reference or not design_path.exists() or not context_path.exists() or load_json(context_path) != context:
-        generate_design_spec(handoff_path, handoff_only=handoff_only)
+    if refresh_reference or not design_path.exists() or (not saved_content and (not context_path.exists() or load_json(context_path) != context)):
+        generate_design_spec(handoff_path, handoff_only=handoff_only, content_file=content_file)
     design_spec = validate_design_spec(load_json(design_path))
     css = css_for_design_spec(design_spec)
 
-    research = {} if handoff_only else load_or_research_business(handoff_path, business)
-    if not research.get("pages") and not handoff_only:
+    research = {} if handoff_only or saved_content else load_or_research_business(handoff_path, business)
+    if not research.get("pages") and not handoff_only and not saved_content:
         raise RuntimeError(f"Could not read the supplied business website. See {handoff_path.parent / 'business_research.json'}; no DeepSeek request was made.")
-    generated = {} if handoff_only else generate_business_content(
+    generated = {} if handoff_only or saved_content else generate_business_content(
         business,
         handoff,
         research,
     )
-    content = verified_business_content(business, generated, {} if handoff_only else research)
+    content = saved_content or verified_business_content(business, generated, {} if handoff_only else research)
+    if saved_content:
+        selected_types = {section["type"] for section in design_spec["sections"]}
+        missing = [kind for kind in ("services", "process", "faq") if content.get(kind) and kind not in selected_types]
+        if missing:
+            raise ValueError(f"Design spec would drop saved content sections: {missing}. Include them before rendering.")
     content_path = handoff_path.parent / "business_content.json"
     content_path.write_text(json.dumps(content, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     html = build_html(business, content, design_spec, {} if handoff_only else research)
-    content["source_mode"] = "verified handoff contacts only" if handoff_only else "first-party research"
+    content["source_mode"] = "supplied source-backed content" if saved_content else "verified handoff contacts only" if handoff_only else "first-party research"
     content_path.write_text(json.dumps(content, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     output_dir = (
@@ -1389,9 +1471,14 @@ def generate_website(handoff_path, handoff_only=False, reference_index=None, ref
         "sections_rendered": rendered_types,
         "sections_omitted": [section["type"] for section in design_spec["sections"] if section["type"] not in rendered_types],
         "source_mode": content["source_mode"], "reference_influences": design_spec["reference_influences"],
+        "content_sources": content.get("research_sources", []),
         "accessibility_adjustments": ["Full-bleed hero adds a dark text panel when overlay < 0.6 to preserve text contrast."] if design_spec["hero"]["layout"] == "full-bleed" and design_spec["hero"]["overlay"] < .6 else [],
     }
     (output_dir / "render_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    if saved_content:
+        context["source_mode"] = content["source_mode"]
+        context["content_sources"] = content.get("research_sources", [])
+        (handoff_path.parent / "design_context.json").write_text(json.dumps(context, indent=2) + "\n", encoding="utf-8")
     shutil.copy2(design_path, output_dir / "design_spec.json")
 
     (output_dir / "ELEMENTOR_REBUILD_NOTES.md").write_text(
@@ -1462,6 +1549,10 @@ if __name__ == "__main__":
 
     modes = parser.add_mutually_exclusive_group()
     parser.add_argument(
+        "--content-file",
+        help="Render existing source-backed content without replacing it with generated or contact-only copy.",
+    )
+    parser.add_argument(
         "--refresh-reference",
         action="store_true",
         help="Refresh discovery and reference analysis, then regenerate its design spec.",
@@ -1529,7 +1620,7 @@ if __name__ == "__main__":
     if args.reference_analysis_only:
         result, label = generate_reference_analysis(args.ai_handoff, args.reference_index or 0, args.reference_url, rendered=not args.static_analysis), "Reference analysis saved"
     elif args.design_only:
-        result, label = generate_design_spec(args.ai_handoff, handoff_only=args.handoff_only), "Design spec saved"
+        result, label = generate_design_spec(args.ai_handoff, handoff_only=args.handoff_only, content_file=args.content_file), "Design spec saved"
     elif args.research_only:
         result, label = generate_research_only(args.ai_handoff), "Business research saved"
     elif args.content_only:
@@ -1537,5 +1628,5 @@ if __name__ == "__main__":
     elif args.visual_qa_only:
         result, label = generate_visual_qa(args.ai_handoff), "Visual QA saved"
     else:
-        result, label = generate_website(args.ai_handoff, handoff_only=args.handoff_only, reference_index=args.reference_index, reference_url=args.reference_url, rendered=not args.static_analysis, refresh_reference=args.refresh_reference), "Website created"
+        result, label = generate_website(args.ai_handoff, handoff_only=args.handoff_only, reference_index=args.reference_index, reference_url=args.reference_url, rendered=not args.static_analysis, refresh_reference=args.refresh_reference, content_file=args.content_file), "Website created"
     print(f"\n{label}: {result}")

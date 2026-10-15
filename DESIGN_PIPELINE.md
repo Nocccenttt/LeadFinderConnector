@@ -77,6 +77,18 @@ grounded content exists. Process and FAQ accept first-party `research.process`
 (`title`, `text`) and `research.faq` (`question`, `answer`) records; the current
 crawler does not fabricate them. There is no form without a configured backend.
 
+For a content-preserving redesign, use `--content-file PATH` with a source-backed
+JSON content file. The file must name the business exactly and list its source
+URLs. Services, process and FAQ records are retained in full; rendering fails if
+the spec would omit them. Subsequent ordinary runs reuse this saved content.
+Contact-only mode refuses to overwrite existing substantive content.
+
+Brown's restored full-content baseline now runs with:
+
+```powershell
+python deepseek_website_generator.py validation/browns/AI_HANDOFF.json --content-file validation/browns/restored_content.json
+```
+
 `--handoff-only` is an explicit contact-only mode for inaccessible business sites.
 It uses fixed factual copy, omits services/reviews/claims, and requires no DeepSeek
 copy request. Reference design still uses DeepSeek. Tree stock photography is

@@ -6,5 +6,9 @@
     "website": "http://www.brownstreeserviceofraleigh.com/"
   },
   "analysis_sha256": "0b8e4fc415679dbff26da17271e8497cf6d86325055b3f472836033d90f5656b",
-  "handoff_only": true
+  "handoff_only": false,
+  "source_mode": "supplied source-backed content",
+  "content_sources": [
+    "https://brownstreeserviceofraleigh.com/"
+  ]
 }

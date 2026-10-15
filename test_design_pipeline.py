@@ -3,6 +3,9 @@ Run: python -m unittest test_design_pipeline
 Live checkpoint commands are documented in DESIGN_PIPELINE.md.
 """
 import copy
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
@@ -92,6 +95,35 @@ class DesignPipelineTests(unittest.TestCase):
         self.assertIn("&lt;script&gt;", html)
         self.assertIn('type="application/ld+json"', html)
         self.assertNotIn('class="hero-image"', html)
+
+    def test_saved_content_survives_reruns_and_cannot_be_reduced_to_contacts(self):
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            handoff = folder / "AI_HANDOFF.json"
+            handoff.write_text("{}", encoding="utf-8")
+            (folder / "business.json").write_text(json.dumps(self.business), encoding="utf-8")
+            (folder / "reference_analysis.json").write_text(json.dumps({"schema_version": 2, "reference": {"url": "https://example.com"}}), encoding="utf-8")
+            spec = copy.deepcopy(generator.DEFAULT_DESIGN_SPEC)
+            (folder / "design_spec.json").write_text(json.dumps(spec), encoding="utf-8")
+            content = generator.verified_business_content(self.business, {}, {})
+            content["services"] = [{"name": "Tree removal", "description": "Preserve this supplied service description in full."}]
+            content["research_sources"] = ["https://example.com/services"]
+            content_file = folder / "supplied_content.json"
+            content_file.write_text(json.dumps(content), encoding="utf-8")
+            with patch.object(generator, "generate_business_content", side_effect=AssertionError("Must not replace saved copy")), patch.object(generator, "load_or_research_business", side_effect=AssertionError("Must not fetch instead of using supplied copy")):
+                output = generator.generate_website(handoff, content_file=content_file)
+                original = (output / "index.html").read_bytes()
+                self.assertIn(b"Preserve this supplied service description in full.", original)
+                generator.generate_website(handoff)
+                self.assertEqual((output / "index.html").read_bytes(), original)
+                with self.assertRaisesRegex(ValueError, "Refusing to overwrite"):
+                    generator.generate_website(handoff, handoff_only=True)
+                self.assertEqual((output / "index.html").read_bytes(), original)
+                spec["sections"] = [spec["sections"][0], spec["sections"][-1]]
+                (folder / "design_spec.json").write_text(json.dumps(spec), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "drop saved content"):
+                    generator.generate_website(handoff, content_file=content_file)
+                self.assertEqual((output / "index.html").read_bytes(), original)
 
 
 if __name__ == "__main__":

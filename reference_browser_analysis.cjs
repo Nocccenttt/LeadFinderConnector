@@ -84,6 +84,7 @@ const path = require('node:path');
         }
       }
       const screenshot = path.join(path.dirname(output), `${mode}-${name}.png`);
+      if (mode === 'qa') await page.screenshot({ path: path.join(path.dirname(output), `${mode}-${name}-top.png`) });
       await page.screenshot({ path: screenshot, fullPage: true });
       results.push({ name, ...evidence, screenshot: path.basename(screenshot) });
     }
