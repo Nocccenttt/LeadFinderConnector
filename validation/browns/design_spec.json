@@ -1,0 +1,123 @@
+{
+  "schema_version": 2,
+  "direction": "A modern, mobile-first local business website for Brown's Tree Service that transfers the reference's editorial composition, generous whitespace, and restrained motion while using only verified business facts and original accessible colors.",
+  "layout": {
+    "composition": "asymmetric",
+    "container_width": 1200
+  },
+  "navigation": {
+    "position": "sticky",
+    "surface": "solid",
+    "logo": "left",
+    "cta": true,
+    "mobile": "menu"
+  },
+  "hero": {
+    "layout": "full-bleed",
+    "alignment": "left",
+    "height": 640,
+    "overlay": 0.55,
+    "image_fit": "cover"
+  },
+  "colors": {
+    "background": "#FFFFFF",
+    "text": "#1A1F1F",
+    "surface": "#F4F6F5",
+    "accent": "#2F6B4F",
+    "on_accent": "#FFFFFF"
+  },
+  "typography": {
+    "heading_family": "sans",
+    "body_family": "sans",
+    "heading_size": 72,
+    "heading_weight": 700,
+    "heading_line_height": 1.1,
+    "heading_case": "none",
+    "body_size": 18,
+    "body_line_height": 1.6
+  },
+  "spacing": {
+    "section": 120,
+    "gutter": 32,
+    "gap": 24
+  },
+  "components": {
+    "cards": "lined",
+    "button": "solid",
+    "radius": 8,
+    "columns": 3
+  },
+  "motion": {
+    "reveal": "fade",
+    "hover": "lift",
+    "duration": 300,
+    "parallax": false
+  },
+  "responsive": {
+    "stack_at": 768,
+    "heading_size": 44,
+    "section_spacing": 64,
+    "gutter": 20,
+    "image_height": 320,
+    "image_order": "after"
+  },
+  "sections": [
+    {
+      "type": "hero",
+      "layout": "feature",
+      "width": "full-bleed",
+      "tone": "accent"
+    },
+    {
+      "type": "facts",
+      "layout": "rows",
+      "width": "contained",
+      "tone": "surface"
+    },
+    {
+      "type": "about",
+      "layout": "split",
+      "width": "contained",
+      "tone": "base"
+    },
+    {
+      "type": "local",
+      "layout": "split",
+      "width": "contained",
+      "tone": "surface"
+    },
+    {
+      "type": "contact",
+      "layout": "split",
+      "width": "contained",
+      "tone": "accent"
+    }
+  ],
+  "reference_influences": [
+    {
+      "principle": "Editorial hero with full-bleed media and left-aligned headline",
+      "evidence": "Desktop hero is 1440x1000 with h1 at x=32, white text on image",
+      "implementation": "Full-bleed hero, left-aligned heading, overlay 0.55, image_fit cover"
+    },
+    {
+      "principle": "Generous vertical rhythm between sections",
+      "evidence": "Desktop sections have 320px bottom padding; mobile 120px",
+      "implementation": "Section spacing 120px desktop, 64px mobile"
+    },
+    {
+      "principle": "Sticky header with transparent surface over hero",
+      "evidence": "Header is fixed, transparent background, transforms on scroll",
+      "implementation": "Sticky nav, solid surface, logo left, CTA button"
+    },
+    {
+      "principle": "Restrained motion with short fades and lifts",
+      "evidence": "Transitions use 0.3s cubic-bezier(0.4,0,0.2,1) and 0.15s",
+      "implementation": "Fade reveal, lift hover, duration 300ms"
+    },
+    {
+      "principle": "Asymmetric composition with left-aligned content",
+      "evidence": "Headings and content start at x=32 on desktop and mobile",
+      "implementation": "Asymmetric layout, left alignment, gutter 32px"
+    }
+  ]
+}

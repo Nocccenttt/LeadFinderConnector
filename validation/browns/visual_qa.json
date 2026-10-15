@@ -1,0 +1,74 @@
+{
+  "passed": true,
+  "checks": {
+    "no_browser_errors": true,
+    "desktop_no_overflow": true,
+    "desktop_images_loaded": true,
+    "desktop_single_h1": true,
+    "desktop_seo_description": true,
+    "desktop_phone_cta_above_fold": true,
+    "desktop_section_order": true,
+    "desktop_header_position": true,
+    "desktop_body_size": true,
+    "desktop_headline_scale": true,
+    "tablet_no_overflow": true,
+    "tablet_images_loaded": true,
+    "tablet_single_h1": true,
+    "tablet_seo_description": true,
+    "tablet_phone_cta_above_fold": true,
+    "tablet_section_order": true,
+    "tablet_header_position": true,
+    "tablet_body_size": true,
+    "tablet_headline_scale": true,
+    "mobile_no_overflow": true,
+    "mobile_images_loaded": true,
+    "mobile_single_h1": true,
+    "mobile_seo_description": true,
+    "mobile_phone_cta_above_fold": true,
+    "mobile_section_order": true,
+    "mobile_header_position": true,
+    "mobile_body_size": true,
+    "mobile_headline_scale": true,
+    "mobile_menu_works": true,
+    "reduced_motion_respected": true,
+    "reveal_animation_runs": true,
+    "button_hover_runs": true
+  },
+  "reference": {
+    "name": "raggededge.com",
+    "url": "https://raggededge.com",
+    "selection": "explicit URL"
+  },
+  "source_mode": "verified handoff contacts only",
+  "reference_influences": [
+    {
+      "principle": "Editorial hero with full-bleed media and left-aligned headline",
+      "evidence": "Desktop hero is 1440x1000 with h1 at x=32, white text on image",
+      "implementation": "Full-bleed hero, left-aligned heading, overlay 0.55, image_fit cover"
+    },
+    {
+      "principle": "Generous vertical rhythm between sections",
+      "evidence": "Desktop sections have 320px bottom padding; mobile 120px",
+      "implementation": "Section spacing 120px desktop, 64px mobile"
+    },
+    {
+      "principle": "Sticky header with transparent surface over hero",
+      "evidence": "Header is fixed, transparent background, transforms on scroll",
+      "implementation": "Sticky nav, solid surface, logo left, CTA button"
+    },
+    {
+      "principle": "Restrained motion with short fades and lifts",
+      "evidence": "Transitions use 0.3s cubic-bezier(0.4,0,0.2,1) and 0.15s",
+      "implementation": "Fade reveal, lift hover, duration 300ms"
+    },
+    {
+      "principle": "Asymmetric composition with left-aligned content",
+      "evidence": "Headings and content start at x=32 on desktop and mobile",
+      "implementation": "Asymmetric layout, left alignment, gutter 32px"
+    }
+  ],
+  "manual_review_required": [
+    "Compare reference and generated screenshots for visible principles; automated checks establish token application, not subjective design similarity."
+  ],
+  "evidence": "visual_qa_evidence.json"
+}

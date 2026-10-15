@@ -1,0 +1,10 @@
+{
+  "business": {
+    "business_name": "Brown's Tree Service",
+    "address": "5104 Yachtsman Ct, Raleigh, NC 27615, USA",
+    "phone": "(919) 845-6222",
+    "website": "http://www.brownstreeserviceofraleigh.com/"
+  },
+  "analysis_sha256": "0b8e4fc415679dbff26da17271e8497cf6d86325055b3f472836033d90f5656b",
+  "handoff_only": true
+}
