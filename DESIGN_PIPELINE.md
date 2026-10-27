@@ -28,18 +28,34 @@ python -m unittest test_design_pipeline
 For Brown's, HANDOFF is
 `"codex_handoffs/HIGH/Brown's Tree Service/AI_HANDOFF.json"`.
 The normal generation command automatically creates missing analysis/spec
-checkpoints before rendering. `--refresh-reference` rebuilds discovery and
-analysis. `--reference-index N` selects an entry from current discovery;
-`--reference-url URL` explicitly selects a submitted site or another legitimate
-website. Explicit URLs are labelled as such, rather than reported as discovered.
+checkpoints before rendering. For a reviewable workflow, run reference analysis
+first, inspect its viewport screenshots and evidence, create the design spec,
+then render the site. `--reference-url URL` analyzes that public website directly
+and skips gallery discovery; a reference already assigned to another lead is
+rejected. Without an explicit reference, the generator selects an unused site
+from the live Admire The Web gallery using a stable per-business starting point.
+Explicit `--reference-index N` remains available for controlled runs and also
+rejects references assigned to another lead. `--refresh-reference` re-analyzes
+the selected reference and regenerates the design spec. Changing the reference
+also invalidates the prior design spec, including when saved source-backed
+business content is used. The design director receives the references and style
+directions already assigned to other leads so it can build a distinct visual
+direction for each business.
+
+The LeadFinder dashboard exposes the same optional visual reference URL in the
+Landing Page Demo panel. Leave it blank to automatically choose a reference not
+already assigned to another lead for a new handoff.
 
 Artifacts beside the handoff:
 
-1. `reference_candidates.json`: four distinct submitted sites from the live hub.
+1. `reference_candidates.json`: four distinct submitted sites from the live hub,
+   or an empty list when a URL was selected directly.
 2. `selected_reference.json`: the chosen site and discovery or explicit source.
 3. `reference_analysis.json`: CSS signals plus computed samples at 1440, 834 and
-   390 pixels. `reference_browser_evidence.json` and `reference-*.png` retain
-   rendered evidence. Analysis excludes source copy, image URLs and logos.
+   390 pixels. Browser analysis ties the hero and CTA to visible top-of-page
+   elements and saves top-viewport and full-page screenshots.
+   `reference_browser_evidence.json` and `reference-*.png` retain rendered
+   evidence. Analysis excludes source copy, image URLs and logos.
 4. `design_spec.draft.json`: raw Director response for diagnosing invalid tokens.
    `design_spec.json`: validated version 2 tokens and reference influence mappings.
    `design_context.json` binds the spec to business facts, analysis and source mode.

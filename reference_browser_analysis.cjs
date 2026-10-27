@@ -23,10 +23,16 @@ const path = require('node:path');
       const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
       if (response && !response.ok()) throw new Error(`Reference returned HTTP ${response.status()}`);
       await page.evaluate(() => document.fonts.ready);
-      // Let lazy loaded layout settle, then sample at the top and after scrolling.
-      await page.waitForTimeout(1200);
+      // Reset sites that preserve/restore scroll, and let responsive layout settle.
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.waitForTimeout(900);
       const evidence = await page.evaluate(() => {
         const visible = el => el && el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0 && getComputedStyle(el).visibility !== 'hidden';
+        const inViewport = el => {
+          if (!visible(el)) return false;
+          const r = el.getBoundingClientRect();
+          return r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
+        };
         const sample = el => {
           if (!el || !visible(el)) return null;
           const s = getComputedStyle(el), b = el.getBoundingClientRect();
@@ -40,20 +46,51 @@ const path = require('node:path');
             animation: s.animationName, transition: s.transition, transform: s.transform,
           };
         };
-        const heading = document.querySelector('h1');
-        const header = document.querySelector('header,[role="banner"]');
-        const hero = document.querySelector('.hero,[class*="hero"],main > section,main > div') || heading?.parentElement;
+        const main = document.querySelector('main,[role="main"]');
+        const h1s = [...document.querySelectorAll('h1')];
+        const visibleHeading = h1s.find(inViewport);
+        const primaryHeading = visibleHeading || h1s.find(el => main?.contains(el)) || h1s[0];
+        const headerCandidates = [...document.querySelectorAll('header,[role="banner"]')].filter(visible);
+        const header = headerCandidates.find(el => el.querySelector('nav,[role="navigation"]')) || headerCandidates[0];
+        const candidateSet = new Set([
+          ...document.querySelectorAll('.hero,[class~="hero"],[class*="hero"],main > section,main > article,main > div,body > section'),
+        ]);
+        for (let node = primaryHeading?.parentElement; node && node !== main && node !== document.body; node = node.parentElement) {
+          candidateSet.add(node);
+        }
+        const heroCandidates = [...candidateSet].filter(el => {
+          if (!inViewport(el)) return false;
+          const r = el.getBoundingClientRect();
+          return r.width >= innerWidth * 0.68 && r.height >= Math.max(180, innerHeight * 0.24)
+            && r.top < innerHeight * 0.7 && r.bottom > 0;
+        });
+        const hero = heroCandidates.sort((a, b) => {
+          const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
+          const explicitA = /(^|\s)hero(\s|$)/i.test(a.className?.baseVal || a.className || '') ? -innerWidth : 0;
+          const explicitB = /(^|\s)hero(\s|$)/i.test(b.className?.baseVal || b.className || '') ? -innerWidth : 0;
+          const semanticA = a.tagName === 'SECTION' ? -innerWidth * 0.25 : 0;
+          const semanticB = b.tagName === 'SECTION' ? -innerWidth * 0.25 : 0;
+          return (ar.height + Math.abs(ar.top) * 0.35 + explicitA + semanticA) - (br.height + Math.abs(br.top) * 0.35 + explicitB + semanticB);
+        })[0] || (primaryHeading && inViewport(primaryHeading) ? primaryHeading.parentElement : null);
+        const heading = hero?.querySelector('h1') || visibleHeading || primaryHeading;
         const sections = [...document.querySelectorAll('main > section,main > div,body > section')].filter(visible).slice(0, 12);
-        const media = [...(hero || document).querySelectorAll('img,video')].filter(visible);
+        const media = [...(hero || document).querySelectorAll('img,video,[role="img"]')].filter(inViewport);
         const nav = header?.querySelector('nav,[role="navigation"]');
         const controls = [...(header || document).querySelectorAll('button,[role="button"],summary')].filter(visible);
+        const heroButtons = hero ? [...hero.querySelectorAll('a,button,[role="button"]')].filter(inViewport) : [];
+        const ctaWords = /call|contact|quote|book|schedule|consult|start|discover|explore/i;
+        const heroCta = heroButtons.find(el => el.matches('a[href^="tel:"],a[href^="mailto:"]'))
+          || heroButtons.find(el => ctaWords.test(`${el.innerText || ''} ${el.getAttribute('aria-label') || ''}`))
+          || heroButtons.find(el => /button|btn|cta/i.test(el.className?.baseVal || el.className || ''))
+          || heroButtons[0];
         const buttons = [...document.querySelectorAll('button,a[class*="button"],a[class*="btn"],.button')].filter(visible);
         return {
           viewport: { width: innerWidth, height: innerHeight }, page_url: location.href,
           body: sample(document.body), header: sample(header), navigation: sample(nav),
           nav_links_visible: [...(nav || document.createElement('div')).querySelectorAll('a')].filter(visible).length,
           mobile_controls_visible: controls.length,
-          hero: sample(hero), headline: sample(heading), hero_media: media.slice(0, 3).map(sample), hero_cta: sample(buttons[0]),
+          hero_selection: hero ? { tag: hero.tagName.toLowerCase(), class_name: String(hero.className?.baseVal || hero.className || '').slice(0, 160), method: 'visible h1 ancestor and top viewport geometry' } : null,
+          hero: sample(hero), headline: sample(heading), hero_media: media.slice(0, 3).map(sample), hero_cta: sample(heroCta),
           headings: [...document.querySelectorAll('h2,h3')].filter(visible).slice(0, 8).map(sample),
           sections: sections.map(sample), buttons: buttons.slice(0, 4).map(sample),
           cards: [...document.querySelectorAll('article,[class*="card"]')].filter(visible).slice(0, 6).map(sample),
@@ -84,9 +121,10 @@ const path = require('node:path');
         }
       }
       const screenshot = path.join(path.dirname(output), `${mode}-${name}.png`);
-      if (mode === 'qa') await page.screenshot({ path: path.join(path.dirname(output), `${mode}-${name}-top.png`) });
+      const topScreenshot = path.join(path.dirname(output), `${mode}-${name}-top.png`);
+      await page.screenshot({ path: topScreenshot });
       await page.screenshot({ path: screenshot, fullPage: true });
-      results.push({ name, ...evidence, screenshot: path.basename(screenshot) });
+      results.push({ name, ...evidence, screenshot: path.basename(screenshot), top_screenshot: path.basename(topScreenshot) });
     }
     // Record actual motion with reduced-motion disabled; do not infer it from a screenshot.
     await page.emulateMedia({ reducedMotion: 'no-preference' });

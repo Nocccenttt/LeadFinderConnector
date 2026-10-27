@@ -1,4 +1,5 @@
 import argparse
+import json
 from pathlib import Path
 
 from deepseek_website_generator import generate_website
@@ -8,7 +9,7 @@ from delivery_manager import create_delivery_json
 from sales_generator import generate_sales_package
 
 
-def run_pipeline(client_folder):
+def run_pipeline(client_folder, reference_url=None):
 
     client_folder = Path(client_folder)
 
@@ -42,7 +43,8 @@ def run_pipeline(client_folder):
     # ----------------------------
 
     website_dir = generate_website(
-        ai_handoff
+        ai_handoff,
+        reference_url=reference_url,
     )
 
 
@@ -58,9 +60,14 @@ def run_pipeline(client_folder):
     print("\n🔍 Running quality validation...")
 
 
-    report = validate(
+    report_file = validate(
     client_folder
 )
+
+    if isinstance(report_file, dict):
+        report = report_file
+    else:
+        report = json.loads(Path(report_file).read_text(encoding="utf-8"))
 
 
     print(

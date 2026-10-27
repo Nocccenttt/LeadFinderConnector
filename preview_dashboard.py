@@ -3,10 +3,11 @@ import json
 from pathlib import Path
 from threading import Lock, Thread
 from time import time
+from urllib.parse import quote
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template_string, request, send_file, send_from_directory
+from flask import Flask, jsonify, redirect, render_template_string, request, send_file, send_from_directory
 
 from pipeline_runner import run_pipeline
 from seo_lead_finder_prospecting_batch import run as run_lead_finder
@@ -60,6 +61,7 @@ input:focus,select:focus{border-color:var(--gold)}
 .progress-error{display:none;margin-top:16px;padding:14px;border:1px solid rgba(229,125,125,.3);border-radius:10px;color:var(--red);font-weight:800}
 
 .demo-grid{display:grid;grid-template-columns:300px 1fr;gap:16px}.demo-info{background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:17px}.demo-name{font-size:20px;font-weight:900}.demo-meta{color:var(--muted);font-size:13px;line-height:1.6;margin-top:8px}.preview{height:620px;background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden}.preview iframe{width:100%;height:100%;border:0;background:#fff}
+.reference-field{margin-top:14px}.reference-field label{display:block;color:var(--muted);font-size:12px;font-weight:800;margin-bottom:7px}.reference-field input{min-height:42px;font-size:13px}.reference-help{color:var(--muted);font-size:11px;line-height:1.4;margin-top:6px}
 .status{color:var(--muted);min-height:20px;margin-top:12px}
 @media(max-width:900px){.form{grid-template-columns:1fr 1fr}.toolbar{grid-template-columns:1fr 150px}.toolbar button{grid-column:auto}.demo-grid{grid-template-columns:1fr}.preview{height:520px}}
 @media(max-width:620px){.app{width:92%;padding-top:20px}.header{align-items:flex-start;flex-direction:column}.form,.stats,.toolbar,.mini-stats{grid-template-columns:1fr}.lead-top,.progress-head{flex-direction:column}.progress-percent{font-size:24px}}
@@ -133,6 +135,7 @@ input:focus,select:focus{border-color:var(--gold)}
 <div id="demo-name" class="demo-name">Select a lead</div>
 <div id="demo-meta" class="demo-meta"></div>
 <div id="demo-status" class="status">Ready.</div>
+<div class="reference-field"><label for="reference-url">Visual reference URL (optional)</label><input id="reference-url" type="url" placeholder="https://example.com"><div class="reference-help">Use a public website for layout and style inspiration. Its copy, images, and branding won’t be reused.</div></div>
 <div class="actions">
 <button id="generate-demo" class="primary" type="button">GENERATE LANDING PAGE</button>
 <button id="regenerate-demo" class="secondary" type="button">REGENERATE</button>
@@ -295,7 +298,7 @@ async function generateDemo(){
     $("generate-demo").disabled=true;$("regenerate-demo").disabled=true;
     status.textContent="Starting landing-page pipeline...";
     try{
-        const response=await fetch("/generate-landing-page",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({priority:selectedLead.priority,name:selectedLead.name})});
+        const response=await fetch("/generate-landing-page",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({priority:selectedLead.priority,name:selectedLead.name,reference_url:$('reference-url').value.trim()})});
         const data=await response.json();
         if(!response.ok)throw new Error(data.error||"Landing page generation failed.");
         watchLandingPage(data.job_id);
@@ -353,8 +356,8 @@ def discover_leads():
             except Exception:
                 continue
             website_dir = client_folder / "website"
-            relative = client_folder.relative_to(ROOT).as_posix()
             ready = (website_dir / "index.html").exists()
+            demo_url, download_url = landing_page_urls(client_folder) if ready else ("", "")
             leads.append({
                 "name": business.get("business_name", client_folder.name),
                 "address": business.get("address", ""),
@@ -365,8 +368,8 @@ def discover_leads():
                 "reason": business.get("opportunity_reasons", ""),
                 "folder": str(client_folder.relative_to(ROOT)),
                 "demo_ready": ready,
-                "demo_url": "/demo/" + str(business.get("opportunity", priority)).upper() + "/" + client_folder.name if ready else "",
-                "download_url": "/download-demo/" + str(business.get("opportunity", priority)).upper() + "/" + client_folder.name if ready else "",
+                "demo_url": demo_url,
+                "download_url": download_url,
             })
     leads.sort(key=lambda lead: (0 if lead["priority"] == "HIGH" else 1 if lead["priority"] == "MEDIUM" else 2, -int(lead["score"] or 0)))
     return leads
@@ -505,16 +508,25 @@ def resolve_client(priority, name):
     return None
 
 
-def run_landing_page(job_id, client_folder):
+def landing_page_urls(client_folder):
+    priority = quote(client_folder.parent.name.upper(), safe="")
+    client_name = quote(client_folder.name, safe="")
+    return f"/preview/{priority}/{client_name}/index.html", f"/download-demo/{priority}/{client_name}"
+
+
+def run_landing_page(job_id, client_folder, reference_url=None):
     try:
-        update_job(job_id, status="running", message="DeepSeek is generating the landing page...")
-        quality_status = run_pipeline(client_folder)
+        message = "DeepSeek is generating the landing page..."
+        if reference_url:
+            message = "Analyzing the selected design reference and generating the landing page..."
+        update_job(job_id, status="running", message=message)
+        quality_status = run_pipeline(client_folder, reference_url=reference_url)
         website = client_folder / "website" / "index.html"
         if not website.exists():
             raise RuntimeError("Pipeline finished without creating website/index.html.")
-        relative = client_folder.relative_to(ROOT).as_posix()
         message = "Landing page ready." if quality_status == "PASS" else "Preview ready; quality review is needed before delivery."
-        update_job(job_id, status="complete", message=message, quality_status=quality_status, preview_url="/demo/" + relative, download_url="/download-demo/" + relative)
+        preview_url, download_url = landing_page_urls(client_folder)
+        update_job(job_id, status="complete", message=message, quality_status=quality_status, preview_url=preview_url, download_url=download_url)
     except Exception as error:
         update_job(job_id, status="error", message=str(error))
 
@@ -525,10 +537,13 @@ def generate_landing_page():
     client_folder = resolve_client(data.get("priority"), data.get("name"))
     if not client_folder:
         return jsonify({"error": "Lead handoff not found. Generate the lead handoff first."}), 404
+    reference_url = str(data.get("reference_url") or "").strip()
+    if reference_url and not reference_url.lower().startswith(("http://", "https://")):
+        return jsonify({"error": "Reference URL must start with http:// or https://."}), 400
     job_id = uuid4().hex
     with jobs_lock:
         jobs[job_id] = {"status": "queued", "message": "Queued landing-page generation..."}
-    Thread(target=run_landing_page, args=(job_id, client_folder), daemon=True).start()
+    Thread(target=run_landing_page, args=(job_id, client_folder, reference_url or None), daemon=True).start()
     return jsonify({"job_id": job_id})
 
 
@@ -563,6 +578,27 @@ def get_demo_folder(priority, name):
     return folder
 
 
+@app.get("/preview/<priority>/<path:name>/<path:asset>")
+def preview_asset(priority, name, asset):
+    folder = get_demo_folder(priority, name)
+    if not folder:
+        return "Landing page not found.", 404
+    website = folder / "website"
+    file_path = (website / asset).resolve()
+    website_root = website.resolve()
+    if not file_path.is_file() or website_root not in file_path.parents:
+        return "Asset not found.", 404
+    return send_from_directory(website, file_path.relative_to(website_root).as_posix())
+
+
+@app.get("/preview/<priority>/<path:name>")
+def preview_named(priority, name):
+    folder = get_demo_folder(priority, name)
+    if not folder:
+        return "Landing page not found.", 404
+    return redirect(f"/preview/{quote(priority.upper(), safe='')}/{quote(name, safe='')}/index.html")
+
+
 @app.get("/demo/<priority>/<path:name>/<path:asset>")
 def demo_asset_named(priority, name, asset):
     folder = get_demo_folder(priority, name)
@@ -590,16 +626,21 @@ def demo_named(priority, name):
     if not folder:
         return "Landing page not found.", 404
 
-    return send_from_directory(
-        folder / "website",
-        "index.html",
-    )
+    return redirect(f"/preview/{quote(priority.upper(), safe='')}/{quote(name, safe='')}/index.html")
 
 
 # Legacy demo route retained for old dashboard links.
 @app.get("/demo/<path:client_path>/<path:asset>")
 def demo_asset_legacy(client_path, asset):
+    if client_path.upper() in ("HIGH", "MEDIUM", "LOW"):
+        named_folder = HANDOFFS / client_path.upper() / asset
+        if (named_folder / "website" / "index.html").is_file():
+            return redirect(f"/preview/{quote(client_path.upper(), safe='')}/{quote(asset, safe='')}/index.html")
     folder = ROOT / client_path
+    if not folder.is_dir():
+        parts = Path(client_path).parts
+        if len(parts) >= 2 and parts[0].upper() in ("HIGH", "MEDIUM", "LOW"):
+            folder = HANDOFFS / parts[0].upper() / Path(*parts[1:])
     website = folder / "website"
 
     if not website.is_dir():
@@ -620,6 +661,10 @@ def demo_asset_legacy(client_path, asset):
 @app.get("/demo/<path:client_path>")
 def demo_legacy(client_path):
     folder = ROOT / client_path
+    if not folder.is_dir():
+        parts = Path(client_path).parts
+        if len(parts) >= 2 and parts[0].upper() in ("HIGH", "MEDIUM", "LOW"):
+            folder = HANDOFFS / parts[0].upper() / Path(*parts[1:])
     website = folder / "website"
 
     if not (website / "index.html").is_file():
