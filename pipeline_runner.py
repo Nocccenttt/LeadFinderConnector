@@ -1,4 +1,5 @@
 import argparse
+import json
 from pathlib import Path
 
 from deepseek_website_generator import generate_website
@@ -58,28 +59,23 @@ def run_pipeline(client_folder):
     print("\n🔍 Running quality validation...")
 
 
-    report = validate(
-    client_folder
-)
+    report_path = validate(client_folder)
+    report_path = Path(report_path)
 
+    if not report_path.exists():
+        raise RuntimeError(f"Validator did not create a report: {report_path}")
 
-    print(
-        "Validation complete"
-    )
+    with report_path.open("r", encoding="utf-8") as report_file:
+        report = json.load(report_file)
+
+    print(f"Validation report: {report_path}")
 
 
     # ----------------------------
     # Step 4: Check Validation
     # ----------------------------
 
-    status = "PASS"
-
-
-    if isinstance(report, dict):
-
-        if report.get("status") == "FAIL":
-
-            status = "FAILED"
+    status = "PASS" if report.get("status") == "PASS" else "FAILED"
 
 
 
