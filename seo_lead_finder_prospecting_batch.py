@@ -26,6 +26,8 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
+from ai_handoff import build_ai_handoff
+
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17 Safari/605.1.15",
@@ -81,31 +83,69 @@ def fetch(url, timeout=10):
 
 
 def google_places_search(niche, area, api_key, max_results):
-    """Find businesses through Google Places Text Search, not Maps HTML scraping."""
+    """Find up to max_results businesses using Google Places Text Search pagination."""
     endpoint = "https://places.googleapis.com/v1/places:searchText"
     request_headers = {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": api_key,
-        "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri",
+        "X-Goog-FieldMask": (
+            "places.displayName,places.formattedAddress,"
+            "places.nationalPhoneNumber,places.websiteUri,nextPageToken"
+        ),
     }
-    print(f"[search] Connecting to Google Places...", flush=True)
-    response = requests.post(
-        endpoint,
-        headers=request_headers,
-        json={"textQuery": f"{niche} in {area}", "pageSize": min(max_results, 20)},
-        timeout=20,
-    )
-    print("[search] Google Places response received.", flush=True)
-    response.raise_for_status()
+    target_count = max(0, int(max_results))
+    if target_count == 0:
+        return []
+
+    print("[search] Connecting to Google Places...", flush=True)
     leads = []
-    for position, place in enumerate(response.json().get("places", []), 1):
-        leads.append(Lead(
-            maps_position=position,
-            name=place.get("displayName", {}).get("text", ""),
-            address=place.get("formattedAddress", ""),
-            phone=place.get("nationalPhoneNumber", ""),
-            website=place.get("websiteUri", ""),
-        ))
+    page_token = None
+    seen = set()
+
+    while len(leads) < target_count:
+        payload = {
+            "textQuery": f"{niche} in {area}",
+            "pageSize": min(target_count - len(leads), 20),
+        }
+        if page_token:
+            payload["pageToken"] = page_token
+
+        response = requests.post(
+            endpoint,
+            headers=request_headers,
+            json=payload,
+            timeout=20,
+        )
+        response.raise_for_status()
+        page = response.json()
+        places = page.get("places", [])
+        print(
+            f"[search] Received {len(places)} place(s); "
+            f"{len(leads) + len(places)} collected so far.",
+            flush=True,
+        )
+
+        for place in places:
+            name = place.get("displayName", {}).get("text", "").strip()
+            address = place.get("formattedAddress", "").strip()
+            dedupe_key = (name.casefold(), address.casefold())
+            if not name or dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            leads.append(Lead(
+                maps_position=len(leads) + 1,
+                name=name,
+                address=address,
+                phone=place.get("nationalPhoneNumber", ""),
+                website=place.get("websiteUri", ""),
+            ))
+            if len(leads) >= target_count:
+                break
+
+        page_token = page.get("nextPageToken")
+        if not page_token or not places:
+            break
+
     return leads
 
 
@@ -230,7 +270,7 @@ def safe_filename(value):
     return value[:150].rstrip(" .")
 
 
-def write_codex_handoff(lead, base_dir):
+def write_codex_handoff(lead, base_dir, niche="local business"):
     """Create a priority-folder handoff for one lead."""
     priority = lead.opportunity.upper()
     business_dir = Path(base_dir) / priority / safe_filename(lead.name)
@@ -238,6 +278,8 @@ def write_codex_handoff(lead, base_dir):
 
     data = {
         "business_name": lead.name,
+        "business_type": niche,
+        "niche": niche,
         "opportunity": lead.opportunity,
         "opportunity_score": lead.opportunity_score,
         "opportunity_reasons": lead.reason,
@@ -317,6 +359,7 @@ This folder is ready to hand off to the website generator.
 5. Score: {lead.opportunity_score}/100
 """
     (business_dir / "README.md").write_text(readme, encoding="utf-8")
+    return business_dir
 
 
 def write_opportunity_csv(leads, path, priority):
@@ -463,7 +506,10 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
         )
         for lead in bucket:
             print(f"       [handoff] {priority}: {lead.name}", flush=True)
-            write_codex_handoff(lead, codex_dir)
+            business_dir = write_codex_handoff(lead, codex_dir, niche)
+            if priority in ("HIGH", "MEDIUM"):
+                handoff_path = build_ai_handoff(business_dir / "business.json")
+                print(f"       [handoff] AI handoff ready: {handoff_path}", flush=True)
 
     for priority, bucket in (("HIGH", high_leads), ("MEDIUM", medium_leads), ("LOW", low_leads)):
         write_opportunity_csv(

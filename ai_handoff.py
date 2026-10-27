@@ -37,7 +37,8 @@ def build_ai_handoff(business_json_path):
             ),
         },
         "business": {
-            "name": business.get("name", ""),
+            "name": business.get("business_name") or business.get("name", ""),
+            "business_type": business.get("business_type") or business.get("category") or business.get("niche") or "local business",
             "address": business.get("address", ""),
             "phone": business.get("phone", ""),
             "website": business.get("website", ""),
@@ -51,6 +52,8 @@ def build_ai_handoff(business_json_path):
             "email": business.get("email", ""),
             "email_source_url": business.get("email_source_url", ""),
         },
+        "seo": business.get("seo", {}) if isinstance(business.get("seo"), dict) else {},
+        "design_references": business.get("design_references", []) if isinstance(business.get("design_references"), list) else [],
         "website_build": {
             "objective": (
                 "Create a modern, mobile-first local business website "
@@ -63,6 +66,11 @@ def build_ai_handoff(business_json_path):
                 "Use the LeadFinder opportunity to guide website strategy.",
                 "Make the website clear, professional, and conversion-focused.",
                 "Make the website mobile-first and responsive.",
+                "Create an SEO content strategy before writing page copy.",
+                "Use a descriptive title tag, meta description, one H1, logical H2/H3 headings, and natural keyword usage.",
+                "Use the verified business location for local SEO only when it is present in the source data.",
+                "Use supplied design references for inspiration, not for copied text, logos, or proprietary images.",
+                "Run technical SEO checks and report unresolved issues.",
                 "Use only information supported by the source data.",
             ],
             "do_not_invent": DO_NOT_INVENT,
@@ -105,6 +113,7 @@ Reason: {lead["reason"]}
 
 ## Business
 Name: {business["name"]}
+Business type: {business.get("business_type", "local business")}
 Address: {business["address"]}
 Phone: {business["phone"]}
 Website: {business["website"]}
@@ -115,6 +124,13 @@ Facebook: {handoff["verified_online_presence"]["facebook"]}
 Instagram: {handoff["verified_online_presence"]["instagram"]}
 LinkedIn: {handoff["verified_online_presence"]["linkedin"]}
 Email: {handoff["verified_online_presence"]["email"]}
+
+## SEO and Design Inputs
+
+SEO settings: {json.dumps(handoff.get("seo", {}), ensure_ascii=False)}
+Design references: {json.dumps(handoff.get("design_references", []), ensure_ascii=False)}
+
+Use keyword ideas as hypotheses only unless verified keyword research data is provided. Never invent search volumes, ranking difficulty, traffic estimates, or guaranteed SEO results.
 
 ## Objective
 
@@ -145,7 +161,9 @@ Do NOT invent:
 
 Build the website around the verified business information above.
 Prioritize clarity, trust, local relevance, mobile usability, and
-conversion-focused calls to action.
+conversion-focused calls to action. SEO content planning and design-reference analysis
+must happen before final page generation. Record reference URLs and explain the design
+principles used without copying the reference site's identity or assets.
 
 Do not fabricate facts to make the website appear more complete.
 """
