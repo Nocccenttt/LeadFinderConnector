@@ -83,31 +83,69 @@ def fetch(url, timeout=10):
 
 
 def google_places_search(niche, area, api_key, max_results):
-    """Find businesses through Google Places Text Search, not Maps HTML scraping."""
+    """Find up to max_results businesses using Google Places Text Search pagination."""
     endpoint = "https://places.googleapis.com/v1/places:searchText"
     request_headers = {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": api_key,
-        "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri",
+        "X-Goog-FieldMask": (
+            "places.displayName,places.formattedAddress,"
+            "places.nationalPhoneNumber,places.websiteUri,nextPageToken"
+        ),
     }
-    print(f"[search] Connecting to Google Places...", flush=True)
-    response = requests.post(
-        endpoint,
-        headers=request_headers,
-        json={"textQuery": f"{niche} in {area}", "pageSize": min(max_results, 20)},
-        timeout=20,
-    )
-    print("[search] Google Places response received.", flush=True)
-    response.raise_for_status()
+    target_count = max(0, int(max_results))
+    if target_count == 0:
+        return []
+
+    print("[search] Connecting to Google Places...", flush=True)
     leads = []
-    for position, place in enumerate(response.json().get("places", []), 1):
-        leads.append(Lead(
-            maps_position=position,
-            name=place.get("displayName", {}).get("text", ""),
-            address=place.get("formattedAddress", ""),
-            phone=place.get("nationalPhoneNumber", ""),
-            website=place.get("websiteUri", ""),
-        ))
+    page_token = None
+    seen = set()
+
+    while len(leads) < target_count:
+        payload = {
+            "textQuery": f"{niche} in {area}",
+            "pageSize": min(target_count - len(leads), 20),
+        }
+        if page_token:
+            payload["pageToken"] = page_token
+
+        response = requests.post(
+            endpoint,
+            headers=request_headers,
+            json=payload,
+            timeout=20,
+        )
+        response.raise_for_status()
+        page = response.json()
+        places = page.get("places", [])
+        print(
+            f"[search] Received {len(places)} place(s); "
+            f"{len(leads) + len(places)} collected so far.",
+            flush=True,
+        )
+
+        for place in places:
+            name = place.get("displayName", {}).get("text", "").strip()
+            address = place.get("formattedAddress", "").strip()
+            dedupe_key = (name.casefold(), address.casefold())
+            if not name or dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            leads.append(Lead(
+                maps_position=len(leads) + 1,
+                name=name,
+                address=address,
+                phone=place.get("nationalPhoneNumber", ""),
+                website=place.get("websiteUri", ""),
+            ))
+            if len(leads) >= target_count:
+                break
+
+        page_token = page.get("nextPageToken")
+        if not page_token or not places:
+            break
+
     return leads
 
 
