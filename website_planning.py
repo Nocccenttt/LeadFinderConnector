@@ -35,8 +35,26 @@ def _location(business):
         value = _text(business.get(key))
         if value:
             return value
-    address = _text(business.get("address"))
-    return address
+    return _text(business.get("address"))
+
+
+def _keyword_location(business, verified_location):
+    for key in ("city", "locality", "town", "service_area"):
+        value = _text(business.get(key))
+        if value:
+            return value
+    parts = [part.strip() for part in verified_location.split(",") if part.strip()]
+    if not parts:
+        return ""
+    first = parts[0].lower()
+    looks_like_street = bool(re.search(r"\\d", first)) or bool(
+        re.search(r"\\b(st|street|rd|road|ave|avenue|blvd|boulevard|drive|dr|lane|ln|court|ct|highway|hwy)\\b", first)
+    )
+    if looks_like_street and len(parts) >= 2:
+        return ", ".join(parts[1:3])
+    if len(parts) >= 2:
+        return ", ".join(parts[:2])
+    return parts[0] if not looks_like_street else ""
 
 
 def build_seo_strategy(business, handoff=None):
@@ -52,6 +70,7 @@ def build_seo_strategy(business, handoff=None):
     )
     category = _business_type(business, handoff)
     location = _location(business)
+    keyword_location = _keyword_location(business, location)
     services = business.get("services", [])
     if not isinstance(services, list):
         services = []
@@ -61,26 +80,26 @@ def build_seo_strategy(business, handoff=None):
     ]
     service_terms = [term for term in service_terms if term]
 
-    primary_keyword = " ".join(part for part in (category, location) if part).strip()
+    primary_keyword = " ".join(part for part in (category, keyword_location) if part).strip()
     secondary_keywords = []
     if category:
         secondary_keywords.append(category)
-    if location and category:
-        secondary_keywords.append(f"{category} near {location}")
-        secondary_keywords.append(f"local {category} in {location}")
+    if keyword_location and category:
+        secondary_keywords.append(f"{category} near {keyword_location}")
+        secondary_keywords.append(f"local {category} in {keyword_location}")
     secondary_keywords.extend(service_terms)
     secondary_keywords = list(dict.fromkeys(term for term in secondary_keywords if term))
 
     title = f"{name} | {category.title()}"
-    if location and location.lower() not in title.lower():
-        title = f"{name} | {category.title()} in {location}"
+    if keyword_location and keyword_location.lower() not in title.lower():
+        title = f"{name} | {category.title()} in {keyword_location}"
     title = re.sub(r"\s+", " ", title).strip()
     if len(title) > 60:
         title = title[:57].rsplit(" ", 1)[0].rstrip(" |,-") + "..."
 
     description = (
         f"Learn about {name}, a {category}"
-        + (f" serving {location}" if location else "")
+        + (f" serving {keyword_location}" if keyword_location else "")
         + ". Explore available services and contact the business for details."
     )
     if len(description) > 160:
@@ -95,6 +114,7 @@ def build_seo_strategy(business, handoff=None):
         "business_name": name,
         "business_type": category,
         "verified_location": location,
+        "keyword_location": keyword_location,
         "primary_keyword": primary_keyword,
         "secondary_keyword_ideas": secondary_keywords,
         "keyword_research_note": (
@@ -104,7 +124,7 @@ def build_seo_strategy(business, handoff=None):
         "search_intent": "Local commercial intent; confirm against actual search results before final publication.",
         "recommended_title": title,
         "recommended_meta_description": description,
-        "recommended_h1": f"{category.title()}" + (f" in {location}" if location else ""),
+        "recommended_h1": f"{category.title()}" + (f" in {keyword_location}" if keyword_location else ""),
         "content_requirements": [
             "Write for customers first; use relevant phrases naturally.",
             "Use one descriptive H1 and a logical H2/H3 hierarchy.",
