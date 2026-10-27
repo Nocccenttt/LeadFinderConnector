@@ -151,6 +151,7 @@ class SEOPlanningTests(unittest.TestCase):
         self.assertIn("tree service", strategy["primary_keyword"].lower())
         self.assertIn("Dallas, TX", strategy["primary_keyword"])
         self.assertIn("Tree trimming", strategy["secondary_keyword_ideas"])
+        self.assertIn("Tree trimming in Dallas, TX", strategy["service_keyword_ideas"])
         self.assertIn("No search-volume", strategy["keyword_research_note"])
         self.assertIsNone(strategy["canonical_url"])
 
