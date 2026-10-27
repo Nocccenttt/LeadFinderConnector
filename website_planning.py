@@ -277,3 +277,47 @@ def validate_seo_html(html, business=None, seo_strategy=None):
             "jsonld_valid": jsonld_valid,
         },
     }
+
+
+def build_css_theme(tokens):
+    """Safely turn AI-proposed visual tokens into CSS variable overrides."""
+    tokens = tokens if isinstance(tokens, dict) else {}
+    color_keys = {
+        "background": "--bg",
+        "background_soft": "--bg-soft",
+        "card": "--card",
+        "text": "--text",
+        "muted": "--muted",
+        "accent": "--gold",
+        "accent_light": "--gold-light",
+    }
+    declarations = []
+    for key, css_var in color_keys.items():
+        value = _text(tokens.get(key))
+        if re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+            declarations.append(f"    {css_var}: {value};")
+    border = _text(tokens.get("border"))
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", border):
+        red, green, blue = (int(border[i:i + 2], 16) for i in (1, 3, 5))
+        declarations.append(f"    --border: rgba({red},{green},{blue},.16);")
+    fonts = {
+        "Arial, Helvetica, sans-serif",
+        "Georgia, serif",
+        "Verdana, Geneva, sans-serif",
+        "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    }
+    font = _text(tokens.get("font_family"))
+    if font in fonts:
+        declarations.append(f"    font-family: {font};")
+    radius = _text(tokens.get("radius"))
+    if radius in {"4px", "7px", "10px", "14px", "18px", "24px"}:
+        declarations.append(f"    --design-radius: {radius};")
+    if not declarations:
+        return "\n/* No validated AI design tokens; retain the base stylesheet. */\n"
+    return (
+        "\n/* Validated design tokens informed by the design brief and references. */\n"
+        ":root {\n" + "\n".join(declarations) + "\n}\n"
+        ".button, .service-card, .benefit-card, .faq-item { "
+        "border-radius: var(--design-radius, 7px); }\n"
+        ".primary { background: var(--gold); color: var(--bg); }\n"
+    )
