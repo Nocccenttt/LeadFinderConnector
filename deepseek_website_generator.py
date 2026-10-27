@@ -918,7 +918,7 @@ def build_html(business, copy, seo_strategy=None):
     meta_description = str(copy.get("meta_description") or seo_strategy.get("recommended_meta_description") or subheadline or intro[:157])
     canonical_url = seo_strategy.get("canonical_url")
     canonical_html = (
-        '<link rel="canonical" href="' + escape(str(canonical_url), quote=True) + '>'
+        '<link rel="canonical" href="' + escape(str(canonical_url), quote=True) + '">'
         if canonical_url else ""
     )
     structured_data = {
@@ -975,7 +975,7 @@ def build_html(business, copy, seo_strategy=None):
             """
 
     if not services_html:
-        services_html = """
+        services_html = f"""
         <article class="service-card">
             <span class="service-number">01</span>
 
