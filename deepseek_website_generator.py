@@ -81,11 +81,8 @@ ABOUT:
 SERVICES:
 Only include services explicitly supported by the supplied information.
 
-Do NOT automatically add:
-residential junk removal, commercial junk removal, furniture removal,
-appliance removal, construction debris, yard waste, estate cleanouts,
-garage cleanouts, hot tub removal, foreclosure cleanouts, or disposal
-unless the source supports them.
+Do NOT automatically add services, specializations, service areas, or
+industry-specific claims unless the source supports them.
 
 Each service:
 {
@@ -114,16 +111,8 @@ FAQ:
 Create up to 5 useful questions.
 Answers must remain supported by the source.
 
-Use natural keyword variations such as:
-junk removal,
-junk removal service,
-local junk removal,
-residential junk removal,
-commercial junk removal,
-furniture removal,
-debris removal
-
-ONLY when supported.
+Use natural keyword variations relevant to the supplied business category
+and verified services. Use each term ONLY when supported by the source data.
 
 Avoid keyword stuffing.
 
