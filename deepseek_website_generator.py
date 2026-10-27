@@ -843,11 +843,15 @@ def generate_copy(business, handoff, seo_strategy=None, design_blueprint=None, r
         )
 
 
-def build_html(business, copy, seo_strategy=None):
+def build_html(business, copy, seo_strategy=None, design_blueprint=None):
     name = get_business_name(business, {})
     business_type = get_business_type(business)
     business_type_title = business_type.title()
     seo_strategy = seo_strategy if isinstance(seo_strategy, dict) else {}
+    design_blueprint = design_blueprint if isinstance(design_blueprint, dict) else {}
+    layout_variant = design_blueprint.get("layout_variant", "split-hero")
+    if layout_variant not in {"editorial", "visual-first", "service-first", "split-hero"}:
+        layout_variant = "split-hero"
 
     phone = business.get("phone", "")
     address = business.get("address", "")
@@ -1139,7 +1143,7 @@ def build_html(business, copy, seo_strategy=None):
 </head>
 
 
-<body>
+<body class="layout-{escape(str(layout_variant))}">
 
 
 <header class="header">
@@ -1570,6 +1574,7 @@ def generate_website(handoff_path):
         business,
         copy,
         seo_strategy,
+        design_blueprint,
     )
 
     output_dir = (
@@ -1585,7 +1590,10 @@ def generate_website(handoff_path):
         encoding="utf-8",
     )
 
-    css_theme = build_css_theme(copy.get("design_tokens", {}))
+    css_theme = build_css_theme(
+        copy.get("design_tokens", {}),
+        design_blueprint.get("layout_variant", "split-hero"),
+    )
     (output_dir / "styles.css").write_text(
         CSS + css_theme,
         encoding="utf-8",
