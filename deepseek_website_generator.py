@@ -9,6 +9,7 @@ from openai import OpenAI
 
 from api_usage_logger import log_usage
 from website_planning import (
+    build_css_theme,
     build_design_blueprint,
     build_seo_strategy,
     discover_admire_references,
@@ -61,7 +62,19 @@ Return ONLY valid JSON with exactly these keys:
     {"question": "", "answer": ""}
   ],
   "cta_title": "",
-  "cta_text": ""
+  "cta_text": "",
+  "design_tokens": {
+    "background": "#07111f",
+    "background_soft": "#0d1b2e",
+    "card": "#101f33",
+    "text": "#f7f9fc",
+    "muted": "#aeb9c9",
+    "accent": "#d7b56d",
+    "accent_light": "#f1d99a",
+    "border": "#ffffff",
+    "font_family": "Arial, Helvetica, sans-serif",
+    "radius": "7px"
+  }
 }
 
 CONTENT RULES:
@@ -72,6 +85,10 @@ SEO METADATA:
 - Follow the supplied SEO strategy and keyword ideas, but never claim heuristic ideas have search-volume data.
 - Use the design blueprint and reference notes to keep section order, tone, and content density aligned with the intended visual direction.
 - References are inspiration only: never copy their wording, brand identity, logos, or proprietary imagery.
+- Use the reference observations and design blueprint to propose a coherent palette and font choice in design_tokens.
+- design_tokens must use six-digit hex colors and one of these font stacks: Arial, Helvetica, sans-serif; Georgia, serif; Verdana, Geneva, sans-serif; or system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif.
+- Choose radius only from 4px, 7px, 10px, 14px, 18px, or 24px.
+- Do not include CSS, HTML, or executable code in design_tokens.
 - Do not repeat keywords unnaturally or create location pages for unverified service areas.
 
 HEADLINE:
@@ -1558,8 +1575,9 @@ def generate_website(handoff_path):
         encoding="utf-8",
     )
 
+    css_theme = build_css_theme(copy.get("design_tokens", {}))
     (output_dir / "styles.css").write_text(
-        CSS,
+        CSS + css_theme,
         encoding="utf-8",
     )
 
