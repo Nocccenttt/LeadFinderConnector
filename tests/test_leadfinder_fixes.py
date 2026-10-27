@@ -76,6 +76,8 @@ class LandingPageCategoryTests(unittest.TestCase):
         self.assertIn("Example Tree Care", html)
         self.assertNotIn("Junk Removal", html)
         self.assertNotIn("junk removal", html.lower())
+        self.assertNotIn("CLEAR SPACE", html)
+        self.assertIn("BUILT AROUND", html)
 
 
 
