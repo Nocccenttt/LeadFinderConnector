@@ -79,7 +79,7 @@ input:focus,select:focus{border-color:var(--gold)}
 <div class="form">
 <input id="niche" type="text" placeholder="Business Type" value="Tree Service" required>
 <input id="area" type="text" placeholder="Location" value="Raleigh, NC" required>
-<select id="max-results"><option value="10">10 Leads</option><option value="25" selected>25 Leads</option><option value="50">50 Leads</option><option value="100">100 Leads</option></select>
+<select id="max-results"><option value="10">10 Leads</option><option value="25" selected>25 Leads</option><option value="50">50 Leads</option><option value="60">60 Leads (API limit)</option></select>
 <button id="generate-button" class="primary" type="submit">GENERATE LEADS</button>
 </div>
 </form>
