@@ -3,6 +3,7 @@ import json
 import os
 from html import escape
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -930,7 +931,13 @@ def build_html(business, copy, seo_strategy=None):
         structured_data["telephone"] = str(phone)
     if address:
         structured_data["address"] = str(address)
-    if website and str(website).startswith(("https://", "http://")):
+    parsed_website = urlparse(str(website)) if website else None
+    website_is_http = bool(
+        parsed_website
+        and parsed_website.scheme in ("https", "http")
+        and parsed_website.netloc
+    )
+    if website_is_http:
         structured_data["url"] = str(website)
     if business.get("email"):
         structured_data["email"] = str(business["email"])
@@ -1093,7 +1100,7 @@ def build_html(business, copy, seo_strategy=None):
 
     website_html = ""
 
-    if website:
+    if website_is_http:
         website_html = f"""
         <a
             class="button secondary"
