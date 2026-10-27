@@ -47,8 +47,8 @@ def _keyword_location(business, verified_location):
     if not parts:
         return ""
     first = parts[0].lower()
-    looks_like_street = bool(re.search(r"\\d", first)) or bool(
-        re.search(r"\\b(st|street|rd|road|ave|avenue|blvd|boulevard|drive|dr|lane|ln|court|ct|highway|hwy)\\b", first)
+    looks_like_street = bool(re.search(r"\d", first)) or bool(
+        re.search(r"\b(st|street|rd|road|ave|avenue|blvd|boulevard|drive|dr|lane|ln|court|ct|highway|hwy)\b", first)
     )
     if looks_like_street and len(parts) >= 2:
         return ", ".join(parts[1:3])
