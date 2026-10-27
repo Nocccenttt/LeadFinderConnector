@@ -1,11 +1,27 @@
 """Regression tests for LeadFinder's scrape-to-landing-page path."""
 
+import sys
 import unittest
 from unittest.mock import Mock, patch
 
+import pipeline_runner
 from deepseek_website_generator import build_html
 from seo_lead_finder_prospecting_batch import google_places_search
 from website_planning import build_css_theme, build_seo_strategy, validate_seo_html
+
+
+class PipelineExitStatusTests(unittest.TestCase):
+    def test_failed_pipeline_returns_nonzero_exit(self):
+        with patch.object(sys, "argv", ["pipeline_runner.py", "client-folder"]):
+            with patch("pipeline_runner.run_pipeline", return_value="FAILED"):
+                with self.assertRaises(SystemExit) as raised:
+                    pipeline_runner.main()
+        self.assertEqual(raised.exception.code, 1)
+
+    def test_passed_pipeline_returns_normally(self):
+        with patch.object(sys, "argv", ["pipeline_runner.py", "client-folder"]):
+            with patch("pipeline_runner.run_pipeline", return_value="PASS"):
+                pipeline_runner.main()
 
 
 class GooglePlacesPaginationTests(unittest.TestCase):
