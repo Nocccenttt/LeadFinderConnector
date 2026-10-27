@@ -707,9 +707,12 @@ details p {
 JS = r"""
 document.querySelectorAll('a[href^="#"]').forEach(function (link) {
     link.addEventListener("click", function () {
-        var target = document.querySelector(
-            link.getAttribute("href")
-        );
+        var selector = link.getAttribute("href");
+        if (!selector || selector === "#") {
+            return;
+        }
+
+        var target = document.querySelector(selector);
 
         if (target) {
             target.scrollIntoView({
