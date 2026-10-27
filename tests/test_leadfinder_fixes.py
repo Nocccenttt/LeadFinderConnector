@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 from deepseek_website_generator import build_html
 from seo_lead_finder_prospecting_batch import google_places_search
-from website_planning import build_seo_strategy, validate_seo_html
+from website_planning import build_css_theme, build_seo_strategy, validate_seo_html
 
 
 class GooglePlacesPaginationTests(unittest.TestCase):
@@ -102,6 +102,19 @@ class SEOPlanningTests(unittest.TestCase):
         self.assertIn('type="application/ld+json"', html)
         report = validate_seo_html(html, business, strategy)
         self.assertEqual(report["status"], "PASS", report)
+
+
+    def test_design_tokens_are_sanitized_before_becoming_css(self):
+        css = build_css_theme({
+            "background": "#112233",
+            "accent": "red; body { display:none }",
+            "font_family": "expression(alert(1))",
+            "radius": "999px",
+        })
+        self.assertIn("--bg: #112233;", css)
+        self.assertNotIn("display:none", css)
+        self.assertNotIn("expression", css)
+        self.assertNotIn("999px", css)
 
     def test_seo_validator_flags_missing_alt_and_multiple_h1s(self):
         html = """<!doctype html><html><head><title>Example</title>
