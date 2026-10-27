@@ -154,9 +154,9 @@ def main():
     args = parser.parse_args()
 
 
-    run_pipeline(
-        args.client_folder
-    )
+    status = run_pipeline(args.client_folder)
+    if status != "PASS":
+        raise SystemExit(1)
 
 
 
