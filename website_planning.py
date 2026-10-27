@@ -327,17 +327,21 @@ def build_css_theme(tokens):
         "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     }
     font = _text(tokens.get("font_family"))
-    if font in fonts:
-        declarations.append(f"    font-family: {font};")
+    font_rule = f"body {{ font-family: {font}; }}\\n" if font in fonts else ""
     radius = _text(tokens.get("radius"))
     if radius in {"4px", "7px", "10px", "14px", "18px", "24px"}:
         declarations.append(f"    --design-radius: {radius};")
-    if not declarations:
-        return "\n/* No validated AI design tokens; retain the base stylesheet. */\n"
+    if not declarations and not font_rule:
+        return "\\n/* No validated AI design tokens; retain the base stylesheet. */\\n"
+    root_rule = (
+        ":root {\\n" + "\\n".join(declarations) + "\\n}\\n"
+        if declarations else ""
+    )
     return (
-        "\n/* Validated design tokens informed by the design brief and references. */\n"
-        ":root {\n" + "\n".join(declarations) + "\n}\n"
-        ".button, .service-card, .benefit-card, .faq-item { "
-        "border-radius: var(--design-radius, 7px); }\n"
-        ".primary { background: var(--gold); color: var(--bg); }\n"
+        "\\n/* Validated design tokens informed by the design brief and references. */\\n"
+        + root_rule
+        + font_rule
+        + ".button, .service-card, .benefit-card, .faq-item { "
+        "border-radius: var(--design-radius, 7px); }\\n"
+        ".primary { background: var(--gold); color: var(--bg); }\\n"
     )
