@@ -1,11 +1,14 @@
 """Regression tests for LeadFinder's scrape-to-landing-page path."""
 
+import json
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pipeline_runner
-from deepseek_website_generator import build_html
+from deepseek_website_generator import build_html, generate_website
 from seo_lead_finder_prospecting_batch import google_places_search
 from website_planning import (build_css_theme, build_design_blueprint, build_seo_strategy, choose_layout_variant, discover_admire_references, validate_seo_html)
 
@@ -90,6 +93,65 @@ class LandingPageCategoryTests(unittest.TestCase):
 
 
 
+
+
+class GeneratorIntegrationTests(unittest.TestCase):
+    def test_mocked_generation_writes_page_design_and_seo_artifacts(self):
+        business = {
+            "business_name": "Example Tree Care",
+            "business_type": "tree service",
+            "city": "Dallas, TX",
+            "address": "1 Main St, Dallas, TX",
+            "phone": "555-0100",
+        }
+        handoff = {"business_type": "tree service", "seo": {}}
+        generated_copy = {
+            "meta_title": "Example Tree Care | Tree Service Dallas",
+            "meta_description": "Learn about tree care services in Dallas, TX.",
+            "headline": "Tree Care for Your Property",
+            "subheadline": "Explore tree care options and contact the business.",
+            "intro": "Example Tree Care provides information about available tree care services in Dallas, TX.",
+            "about_title": "About Example Tree Care",
+            "about": "Contact the business to learn more about its services.",
+            "services_intro": "Ask about available tree care services.",
+            "services": [{"name": "Tree trimming", "description": "Ask the business whether this service is available."}],
+            "benefits": [],
+            "process": [],
+            "local_intro": "Contact Example Tree Care to discuss your needs.",
+            "faq": [],
+            "cta_title": "Contact Example Tree Care",
+            "cta_text": "Ask about available services.",
+            "design_tokens": {"background": "#112233", "font_family": "Arial, Helvetica, sans-serif"},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            folder = Path(temp_dir)
+            (folder / "business.json").write_text(json.dumps(business), encoding="utf-8")
+            handoff_path = folder / "AI_HANDOFF.json"
+            handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+            references = {
+                "source": "Admire The Web",
+                "query": "tree service",
+                "search_url": "https://www.admiretheweb.com/?s=tree%20service",
+                "references": [],
+                "status": "not_available",
+                "note": "Mocked offline fallback for test.",
+            }
+            with patch("deepseek_website_generator.discover_admire_references", return_value=references):
+                with patch("deepseek_website_generator.generate_copy", return_value=generated_copy):
+                    output = generate_website(handoff_path)
+
+            self.assertTrue((output / "index.html").exists())
+            self.assertTrue((output / "styles.css").exists())
+            self.assertTrue((folder / "SEO_STRATEGY.json").exists())
+            self.assertTrue((folder / "DESIGN_REFERENCES.json").exists())
+            self.assertTrue((folder / "DESIGN_BLUEPRINT.json").exists())
+            self.assertTrue((folder / "SEO_QA_REPORT.json").exists())
+            html = (output / "index.html").read_text(encoding="utf-8")
+            css = (output / "styles.css").read_text(encoding="utf-8")
+            report = json.loads((folder / "SEO_QA_REPORT.json").read_text(encoding="utf-8"))
+            self.assertIn('<body class="layout-service-first">', html)
+            self.assertIn(".layout-service-first .service-grid", css)
+            self.assertEqual(report["status"], "PASS", report)
 
 class DesignResearchTests(unittest.TestCase):
     @patch("website_planning.requests.get")
