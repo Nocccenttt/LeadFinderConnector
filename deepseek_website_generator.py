@@ -70,6 +70,8 @@ SEO METADATA:
 - Provide a natural title tag, ideally 30–60 characters, using the business name and relevant service/location only when verified.
 - Provide a useful meta description, ideally 70–160 characters, accurately describing the page.
 - Follow the supplied SEO strategy and keyword ideas, but never claim heuristic ideas have search-volume data.
+- Use the design blueprint and reference notes to keep section order, tone, and content density aligned with the intended visual direction.
+- References are inspiration only: never copy their wording, brand identity, logos, or proprietary imagery.
 - Do not repeat keywords unnaturally or create location pages for unverified service areas.
 
 HEADLINE:
@@ -109,12 +111,8 @@ Create 4 short benefit statements based only on verified information
 or reasonable non-factual service framing.
 
 PROCESS:
-Create:
-1. Contact
-2. Schedule
-3. Removal
-
-Keep the process general.
+Create up to three clear, general steps that fit the supplied business category.
+Do not assume removal, installation, repair, or any other specific service unless supported by source data.
 
 LOCAL SEO:
 Naturally use the verified city, state and address.
@@ -753,7 +751,7 @@ def phone_link(phone):
     )
 
 
-def generate_copy(business, handoff, seo_strategy=None):
+def generate_copy(business, handoff, seo_strategy=None, design_blueprint=None, reference_research=None):
     api_key = os.getenv("DEEPSEEK_API_KEY")
 
     if not api_key:
@@ -771,6 +769,8 @@ def generate_copy(business, handoff, seo_strategy=None):
             "business": business,
             "ai_handoff": handoff,
             "seo_strategy": seo_strategy or {},
+            "design_blueprint": design_blueprint or {},
+            "design_reference_research": reference_research or {},
         },
         ensure_ascii=False,
         indent=2,
@@ -796,7 +796,7 @@ def generate_copy(business, handoff, seo_strategy=None):
             },
         ],
         temperature=0.5,
-        max_tokens=900,
+        max_tokens=1800,
     )
 
     print("\nDeepSeek Usage:")
@@ -1535,6 +1535,8 @@ def generate_website(handoff_path):
         business,
         handoff,
         seo_strategy,
+        design_blueprint,
+        reference_research,
     )
 
     html = build_html(
