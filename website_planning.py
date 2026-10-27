@@ -90,6 +90,12 @@ def build_seo_strategy(business, handoff=None):
         secondary_keywords.append(f"{category} near {keyword_location}")
         secondary_keywords.append(f"local {category} in {keyword_location}")
     secondary_keywords.extend(service_terms)
+    service_keyword_ideas = [
+        f"{term} in {keyword_location}"
+        for term in service_terms
+        if keyword_location
+    ]
+    secondary_keywords.extend(service_keyword_ideas)
     secondary_keywords = list(dict.fromkeys(term for term in secondary_keywords if term))
 
     title = f"{name} | {category.title()}"
@@ -124,6 +130,7 @@ def build_seo_strategy(business, handoff=None):
         "keyword_location": keyword_location,
         "primary_keyword": primary_keyword,
         "secondary_keyword_ideas": secondary_keywords,
+        "service_keyword_ideas": service_keyword_ideas,
         "keyword_research_note": (
             "Heuristic suggestions only. No search-volume, difficulty, or ranking "
             "metrics were retrieved; validate with a keyword-data provider before making claims."
@@ -187,7 +194,7 @@ def discover_admire_references(business_type, limit=5, timeout=8):
             result["references"].append({
                 "title": title,
                 "url": href,
-                "excerpt": excerpt_node.get_text(" ", strip=True) if excerpt_node else "",
+                "excerpt": excerpt_node.get_text(" ", strip=True)[:300] if excerpt_node else "",
                 "source": "Admire The Web",
                 "use_for": "Review layout, typography, color, hierarchy, and interaction patterns; do not copy brand assets or page copy.",
             })
