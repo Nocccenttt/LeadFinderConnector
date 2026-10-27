@@ -103,6 +103,41 @@ class SEOPlanningTests(unittest.TestCase):
         report = validate_seo_html(html, business, strategy)
         self.assertEqual(report["status"], "PASS", report)
 
+    def test_canonical_link_is_well_formed_when_configured(self):
+        business = {
+            "business_name": "Example Tree Care",
+            "business_type": "tree service",
+            "city": "Dallas, TX",
+        }
+        strategy = build_seo_strategy(
+            business,
+            {"seo": {"canonical_url": "https://example.com/tree-care"}},
+        )
+        html = build_html(business, {}, strategy)
+        self.assertIn(
+            '<link rel="canonical" href="https://example.com/tree-care">',
+            html,
+        )
+
+    def test_empty_services_fallback_renders_category(self):
+        html = build_html(
+            {"business_name": "Example Tree Care", "business_type": "tree service"},
+            {"services": []},
+        )
+        self.assertIn("<h3>\n                Tree Service\n            </h3>", html)
+        self.assertNotIn("{escape(str(business_type_title))}", html)
+
+    def test_non_http_business_website_is_not_rendered_as_link(self):
+        html = build_html(
+            {
+                "business_name": "Example Tree Care",
+                "business_type": "tree service",
+                "website": "javascript:alert(1)",
+            },
+            {},
+        )
+        self.assertNotIn('href="javascript:alert(1)"', html)
+
 
     def test_design_tokens_are_sanitized_before_becoming_css(self):
         css = build_css_theme({
