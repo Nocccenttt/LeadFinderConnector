@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 import pipeline_runner
 from deepseek_website_generator import build_html
 from seo_lead_finder_prospecting_batch import google_places_search
-from website_planning import build_css_theme, build_seo_strategy, validate_seo_html
+from website_planning import (build_css_theme, build_design_blueprint, build_seo_strategy, choose_layout_variant, discover_admire_references, validate_seo_html)
 
 
 class PipelineExitStatusTests(unittest.TestCase):
@@ -62,6 +62,15 @@ class GooglePlacesPaginationTests(unittest.TestCase):
 
 
 class LandingPageCategoryTests(unittest.TestCase):
+    def test_html_applies_selected_layout_class(self):
+        html = build_html(
+            {"business_name": "Example Tree Care", "business_type": "tree service"},
+            {},
+            {},
+            {"layout_variant": "service-first"},
+        )
+        self.assertIn('<body class="layout-service-first">', html)
+
     def test_html_uses_supplied_business_category(self):
         html = build_html(
             {
@@ -80,6 +89,55 @@ class LandingPageCategoryTests(unittest.TestCase):
         self.assertIn("BUILT AROUND", html)
 
 
+
+
+class DesignResearchTests(unittest.TestCase):
+    @patch("website_planning.requests.get")
+    def test_reference_search_extracts_only_real_admire_domains(self, get):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.text = """
+        <article><h2><a href="https://www.admiretheweb.com/example-design/">Example Design</a></h2><p>Bold typography and strong hierarchy.</p></article>
+        <article><h2><a href="https://admiretheweb.com/another/">Another Design</a></h2></article>
+        <article><h2><a href="https://admiretheweb.com.attacker.invalid/fake/">Fake Domain</a></h2></article>
+        """
+        get.return_value = response
+
+        result = discover_admire_references("tree service")
+
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(len(result["references"]), 2)
+        self.assertTrue(all("admiretheweb.com" in item["url"] for item in result["references"]))
+
+    @patch("website_planning.requests.get")
+    def test_reference_search_failure_is_nonfatal_and_actionable(self, get):
+        import requests
+        get.side_effect = requests.Timeout("test timeout")
+
+        result = discover_admire_references("tree service")
+
+        self.assertEqual(result["status"], "not_available")
+        self.assertIn("manually", result["note"].lower())
+        self.assertEqual(result["references"], [])
+
+    def test_category_selects_distinct_layout_variants(self):
+        self.assertEqual(choose_layout_variant("tree service"), "service-first")
+        self.assertEqual(choose_layout_variant("restaurant"), "visual-first")
+        self.assertEqual(choose_layout_variant("legal consulting"), "editorial")
+        self.assertEqual(choose_layout_variant("local business"), "split-hero")
+
+        strategy = build_seo_strategy({"business_type": "tree service"}, {})
+        blueprint = build_design_blueprint({}, strategy, {"references": [], "status": "not_available"})
+        self.assertEqual(blueprint["layout_variant"], "service-first")
+        css = build_css_theme({}, blueprint["layout_variant"])
+        self.assertIn(".layout-service-first .service-grid", css)
+
+    def test_invalid_canonical_urls_are_discarded(self):
+        strategy = build_seo_strategy(
+            {"business_type": "tree service"},
+            {"seo": {"canonical_url": "https:invalid.example/path"}},
+        )
+        self.assertIsNone(strategy["canonical_url"])
 
 class SEOPlanningTests(unittest.TestCase):
     def test_strategy_uses_business_facts_and_labels_keyword_ideas(self):
