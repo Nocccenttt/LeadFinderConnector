@@ -1228,8 +1228,8 @@ def build_html(business, copy, seo_strategy=None):
             </div>
 
             <div class="visual-small">
-                CLEAR SPACE.<br>
-                MOVE FORWARD.
+                BUILT AROUND<br>
+                YOUR NEEDS.
             </div>
 
         </div>
