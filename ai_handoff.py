@@ -37,7 +37,8 @@ def build_ai_handoff(business_json_path):
             ),
         },
         "business": {
-            "name": business.get("name", ""),
+            "name": business.get("business_name") or business.get("name", ""),
+            "business_type": business.get("business_type") or business.get("category") or business.get("niche") or "local business",
             "address": business.get("address", ""),
             "phone": business.get("phone", ""),
             "website": business.get("website", ""),
@@ -105,6 +106,7 @@ Reason: {lead["reason"]}
 
 ## Business
 Name: {business["name"]}
+Business type: {business.get("business_type", "local business")}
 Address: {business["address"]}
 Phone: {business["phone"]}
 Website: {business["website"]}
