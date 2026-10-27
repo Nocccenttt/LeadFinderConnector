@@ -26,6 +26,8 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
+from ai_handoff import build_ai_handoff
+
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17 Safari/605.1.15",
@@ -230,7 +232,7 @@ def safe_filename(value):
     return value[:150].rstrip(" .")
 
 
-def write_codex_handoff(lead, base_dir):
+def write_codex_handoff(lead, base_dir, niche="local business"):
     """Create a priority-folder handoff for one lead."""
     priority = lead.opportunity.upper()
     business_dir = Path(base_dir) / priority / safe_filename(lead.name)
@@ -238,6 +240,8 @@ def write_codex_handoff(lead, base_dir):
 
     data = {
         "business_name": lead.name,
+        "business_type": niche,
+        "niche": niche,
         "opportunity": lead.opportunity,
         "opportunity_score": lead.opportunity_score,
         "opportunity_reasons": lead.reason,
@@ -317,6 +321,7 @@ This folder is ready to hand off to the website generator.
 5. Score: {lead.opportunity_score}/100
 """
     (business_dir / "README.md").write_text(readme, encoding="utf-8")
+    return business_dir
 
 
 def write_opportunity_csv(leads, path, priority):
@@ -463,7 +468,10 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
         )
         for lead in bucket:
             print(f"       [handoff] {priority}: {lead.name}", flush=True)
-            write_codex_handoff(lead, codex_dir)
+            business_dir = write_codex_handoff(lead, codex_dir, niche)
+            if priority in ("HIGH", "MEDIUM"):
+                handoff_path = build_ai_handoff(business_dir / "business.json")
+                print(f"       [handoff] AI handoff ready: {handoff_path}", flush=True)
 
     for priority, bucket in (("HIGH", high_leads), ("MEDIUM", medium_leads), ("LOW", low_leads)):
         write_opportunity_csv(
