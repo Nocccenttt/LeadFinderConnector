@@ -18,8 +18,8 @@ MODEL = "deepseek-chat"
 SYSTEM_PROMPT = """
 You are a senior local SEO strategist and conversion copywriter.
 
-Create a SMALL JSON object containing business-specific website copy for a local
-junk removal company.
+Create a SMALL JSON object containing business-specific website copy for the
+local business category supplied in the source data. Never assume a specific industry.
 
 Use ONLY information provided in the source data.
 
@@ -60,16 +60,16 @@ CONTENT RULES:
 
 HEADLINE:
 - Under 12 words.
-- Relevant to junk removal.
+- Relevant to the supplied business category.
 - Include the business name when natural.
 
 SUBHEADLINE:
 - Under 30 words.
-- Clearly explain the local service.
+- Clearly explain the supplied local business service.
 
 INTRO:
 - 80–120 words.
-- Naturally mention junk removal.
+- Naturally mention the supplied business category.
 - Mention the verified location when available.
 - No keyword stuffing.
 
@@ -708,14 +708,30 @@ def load_json(path):
 
 
 def get_business_name(business, handoff):
+    handoff_business = handoff.get("business", {}) if isinstance(handoff, dict) else {}
     return (
         business.get("business_name")
         or business.get("name")
         or handoff.get("business_name")
-        or handoff.get("business", {}).get("business_name")
-        or handoff.get("business", {}).get("name")
-        or "Local Junk Removal"
+        or handoff_business.get("business_name")
+        or handoff_business.get("name")
+        or "Local Business"
     )
+
+
+def get_business_type(business, handoff=None):
+    """Return the requested business category without assuming an industry."""
+    handoff = handoff or {}
+    handoff_business = handoff.get("business", {}) if isinstance(handoff, dict) else {}
+    return (
+        business.get("business_type")
+        or business.get("category")
+        or business.get("niche")
+        or handoff.get("business_type")
+        or handoff_business.get("business_type")
+        or handoff_business.get("category")
+        or "local business"
+    ).strip()
 
 
 def phone_link(phone):
@@ -756,13 +772,19 @@ def generate_copy(business, handoff):
         indent=2,
     )
 
+    business_type = get_business_type(business, handoff)
+    system_prompt = SYSTEM_PROMPT.replace(
+        "the supplied business category",
+        business_type,
+    )
+
     response = client.chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
         messages=[
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT,
+                "content": system_prompt,
             },
             {
                 "role": "user",
@@ -798,6 +820,8 @@ def generate_copy(business, handoff):
 
 def build_html(business, copy):
     name = get_business_name(business, {})
+    business_type = get_business_type(business)
+    business_type_title = business_type.title()
 
     phone = business.get("phone", "")
     address = business.get("address", "")
@@ -805,7 +829,7 @@ def build_html(business, copy):
 
     headline = copy.get(
         "headline",
-        f"Professional Junk Removal in Your Area",
+        f"Professional {business_type_title} Services in Your Area",
     )
 
     subheadline = copy.get(
@@ -820,7 +844,7 @@ def build_html(business, copy):
 
     about_title = copy.get(
         "about_title",
-        "Local Junk Removal Made Simple",
+        f"Local {business_type_title} Made Simple",
     )
 
     about = copy.get(
@@ -860,7 +884,7 @@ def build_html(business, copy):
 
     cta_title = copy.get(
         "cta_title",
-        "Ready to Clear the Clutter?",
+        "Ready to Get Started?",
     )
 
     cta_text = copy.get(
@@ -912,12 +936,12 @@ def build_html(business, copy):
             <span class="service-number">01</span>
 
             <h3>
-                Junk Removal
+                {escape(str(business_type_title))}
             </h3>
 
             <p>
-                Contact the business directly to discuss your junk removal needs
-                and determine the appropriate service for your situation.
+                Contact the business directly to discuss your needs and determine
+                which services are available.
             </p>
         </article>
         """
@@ -1050,7 +1074,7 @@ def build_html(business, copy):
 >
 
 <title>
-    {escape(str(name))} | Junk Removal
+    {escape(str(name))} | {escape(str(business_type_title))}
 </title>
 
 <meta
@@ -1107,7 +1131,7 @@ def build_html(business, copy):
         <div class="hero-content">
 
             <span class="eyebrow">
-                LOCAL JUNK REMOVAL
+                {escape(str(business_type.upper()))}
             </span>
 
             <h1>
@@ -1145,11 +1169,11 @@ def build_html(business, copy):
             <div class="visual-main">
 
                 <span>
-                    JUNK
+                    {escape(str(business_type_title.upper()))}
                 </span>
 
                 <strong>
-                    REMOVAL
+                    SERVICES
                 </strong>
 
             </div>
@@ -1173,7 +1197,7 @@ def build_html(business, copy):
         <div>
 
             <span class="eyebrow">
-                JUNK REMOVAL SERVICE
+                {escape(str(business_type_title.upper()))}
             </span>
 
             <h2>
@@ -1205,11 +1229,11 @@ def build_html(business, copy):
         <div class="section-heading">
 
             <span class="eyebrow">
-                JUNK REMOVAL SERVICES
+                {escape(str(business_type_title.upper()))}S
             </span>
 
             <h2>
-                Clear Out What You No Longer Need
+                Services Designed Around Your Needs
             </h2>
 
             <p>
@@ -1270,7 +1294,7 @@ def build_html(business, copy):
             </span>
 
             <h2>
-                A Cleaner Space Starts Here
+                A Better Service Experience Starts Here
             </h2>
 
         </div>
@@ -1298,7 +1322,7 @@ def build_html(business, copy):
             </span>
 
             <h2>
-                Simple Steps. Less Clutter.
+                Simple Steps. Clear Next Actions.
             </h2>
 
         </div>
@@ -1319,7 +1343,7 @@ def build_html(business, copy):
         <div>
 
             <span class="eyebrow">
-                LOCAL JUNK REMOVAL
+                {escape(str(business_type.upper()))}
             </span>
 
             <h2>
@@ -1359,7 +1383,7 @@ def build_html(business, copy):
             </span>
 
             <h2>
-                Junk Removal Questions
+                {escape(str(business_type_title))} Questions
             </h2>
 
         </div>
