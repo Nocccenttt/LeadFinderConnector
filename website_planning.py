@@ -364,12 +364,12 @@ def build_css_theme(tokens, layout_variant="split-hero"):
         "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     }
     font = _text(tokens.get("font_family"))
-    font_rule = f"body {{ font-family: {font}; }}\\n" if font in fonts else ""
+    font_rule = f"body {{ font-family: {font}; }}\n" if font in fonts else ""
     radius = _text(tokens.get("radius"))
     if radius in {"4px", "7px", "10px", "14px", "18px", "24px"}:
         declarations.append(f"    --design-radius: {radius};")
     root_rule = (
-        ":root {\\n" + "\\n".join(declarations) + "\\n}\\n"
+        ":root {\n" + "\n".join(declarations) + "\n}\n"
         if declarations else ""
     )
     layout_rules = {
@@ -404,13 +404,13 @@ def build_css_theme(tokens, layout_variant="split-hero"):
     if layout_variant not in layout_rules:
         layout_variant = "split-hero"
     if not declarations and not font_rule and not layout_rules[layout_variant]:
-        return "\\n/* No validated AI design tokens; retain the base stylesheet. */\\n"
+        return "\n/* No validated AI design tokens; retain the base stylesheet. */\n"
     return (
-        "\\n/* Validated design tokens informed by the design brief and references. */\\n"
+        "\n/* Validated design tokens informed by the design brief and references. */\n"
         + root_rule
         + font_rule
         + ".button, .service-card, .benefit-card, .faq-item { "
-        "border-radius: var(--design-radius, 7px); }\\n"
-        ".primary { background: var(--gold); color: var(--bg); }\\n"
+        "border-radius: var(--design-radius, 7px); }\n"
+        ".primary { background: var(--gold); color: var(--bg); }\n"
         + layout_rules[layout_variant]
     )
