@@ -26,6 +26,8 @@ def _business_type(business, handoff):
         or _text(business.get("niche"))
         or _text(nested.get("business_type"))
         or _text(nested.get("category"))
+        or _text(handoff.get("business_type"))
+        or _text(handoff.get("niche"))
         or "local business"
     )
 
@@ -107,7 +109,12 @@ def build_seo_strategy(business, handoff=None):
 
     seo_config = handoff.get("seo", {}) if isinstance(handoff.get("seo"), dict) else {}
     canonical_url = _text(business.get("canonical_url") or seo_config.get("canonical_url"))
-    if canonical_url and urlparse(canonical_url).scheme not in ("http", "https"):
+    parsed_canonical = urlparse(canonical_url) if canonical_url else None
+    if canonical_url and not (
+        parsed_canonical
+        and parsed_canonical.scheme in ("http", "https")
+        and parsed_canonical.netloc
+    ):
         canonical_url = ""
 
     return {
@@ -165,9 +172,15 @@ def discover_admire_references(business_type, limit=5, timeout=8):
             href = (anchor.get("href") or "").strip()
             title = anchor.get_text(" ", strip=True)
             parsed = urlparse(href)
-            if parsed.scheme not in ("http", "https") or not title or href in seen:
+            host = (parsed.hostname or "").lower().rstrip(".")
+            if (
+                parsed.scheme not in ("http", "https")
+                or not parsed.netloc
+                or not title
+                or href in seen
+            ):
                 continue
-            if "admiretheweb.com" not in (parsed.netloc or "").lower():
+            if host != "admiretheweb.com" and not host.endswith(".admiretheweb.com"):
                 continue
             seen.add(href)
             excerpt_node = article.select_one("p")
@@ -190,10 +203,34 @@ def discover_admire_references(business_type, limit=5, timeout=8):
     return result
 
 
+def choose_layout_variant(business_type):
+    """Choose a stable, category-aware visual layout variant for the generated page."""
+    category = _text(business_type).lower()
+    if any(term in category for term in (
+        "restaurant", "cafe", "coffee", "food", "bakery", "fitness",
+        "beauty", "salon", "photography", "wedding", "florist",
+    )):
+        return "visual-first"
+    if any(term in category for term in (
+        "law", "legal", "accounting", "consult", "marketing", "design",
+        "architecture", "financial", "therapy",
+    )):
+        return "editorial"
+    if any(term in category for term in (
+        "plumb", "roof", "tree service", "garage door", "hvac", "landscap",
+        "electric", "contractor", "construction", "cleaning", "pest control",
+        "moving", "repair", "handyman",
+    )):
+        return "service-first"
+    return "split-hero"
+
+
 def build_design_blueprint(business, seo_strategy, reference_research):
     """Create a machine-readable design brief that keeps references separate from facts."""
     category = seo_strategy.get("business_type", "local business")
+    layout_variant = choose_layout_variant(category)
     return {
+        "layout_variant": layout_variant,
         "business_name": seo_strategy.get("business_name", "Local Business"),
         "business_type": category,
         "content_alignment": {
@@ -299,8 +336,8 @@ def validate_seo_html(html, business=None, seo_strategy=None):
     }
 
 
-def build_css_theme(tokens):
-    """Safely turn AI-proposed visual tokens into CSS variable overrides."""
+def build_css_theme(tokens, layout_variant="split-hero"):
+    """Safely apply AI design tokens and a validated category-aware layout variant."""
     tokens = tokens if isinstance(tokens, dict) else {}
     color_keys = {
         "background": "--bg",
@@ -327,21 +364,53 @@ def build_css_theme(tokens):
         "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     }
     font = _text(tokens.get("font_family"))
-    font_rule = f"body {{ font-family: {font}; }}\n" if font in fonts else ""
+    font_rule = f"body {{ font-family: {font}; }}\\n" if font in fonts else ""
     radius = _text(tokens.get("radius"))
     if radius in {"4px", "7px", "10px", "14px", "18px", "24px"}:
         declarations.append(f"    --design-radius: {radius};")
-    if not declarations and not font_rule:
-        return "\n/* No validated AI design tokens; retain the base stylesheet. */\n"
     root_rule = (
-        ":root {\n" + "\n".join(declarations) + "\n}\n"
+        ":root {\\n" + "\\n".join(declarations) + "\\n}\\n"
         if declarations else ""
     )
+    layout_rules = {
+        "editorial": """
+.layout-editorial .hero { min-height: 560px; background: linear-gradient(120deg, var(--bg), var(--bg-soft)); }
+.layout-editorial .hero-grid { grid-template-columns: minmax(0, 1fr); max-width: 1000px; }
+.layout-editorial .hero-content { max-width: 850px; }
+.layout-editorial .hero-visual { display: none; }
+.layout-editorial .hero h1 { max-width: 780px; }
+.layout-editorial .intro-grid { grid-template-columns: .65fr 1.35fr; }
+@media (max-width: 850px) { .layout-editorial .intro-grid { grid-template-columns: 1fr; } }
+""",
+        "visual-first": """
+.layout-visual-first .hero { min-height: 760px; }
+.layout-visual-first .hero-grid { grid-template-columns: .85fr 1.15fr; gap: 42px; }
+.layout-visual-first .hero-visual { min-height: 520px; }
+.layout-visual-first .visual-main { inset: 0 20px 50px 0; }
+.layout-visual-first .visual-small { max-width: 230px; }
+.layout-visual-first .service-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 850px) { .layout-visual-first .hero-grid, .layout-visual-first .service-grid { grid-template-columns: 1fr; } .layout-visual-first .hero-visual { min-height: 300px; } }
+""",
+        "service-first": """
+.layout-service-first .hero { min-height: 590px; }
+.layout-service-first .hero-grid { grid-template-columns: 1.2fr .8fr; gap: 38px; }
+.layout-service-first .service-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.layout-service-first .service-card { min-height: 220px; padding: 26px; }
+.layout-service-first .service-card h3 { margin-top: 36px; }
+@media (max-width: 850px) { .layout-service-first .hero-grid, .layout-service-first .service-grid { grid-template-columns: 1fr; } }
+""",
+        "split-hero": "",
+    }
+    if layout_variant not in layout_rules:
+        layout_variant = "split-hero"
+    if not declarations and not font_rule and not layout_rules[layout_variant]:
+        return "\\n/* No validated AI design tokens; retain the base stylesheet. */\\n"
     return (
-        "\n/* Validated design tokens informed by the design brief and references. */\n"
+        "\\n/* Validated design tokens informed by the design brief and references. */\\n"
         + root_rule
         + font_rule
         + ".button, .service-card, .benefit-card, .faq-item { "
-        "border-radius: var(--design-radius, 7px); }\n"
-        ".primary { background: var(--gold); color: var(--bg); }\n"
+        "border-radius: var(--design-radius, 7px); }\\n"
+        ".primary { background: var(--gold); color: var(--bg); }\\n"
+        + layout_rules[layout_variant]
     )
