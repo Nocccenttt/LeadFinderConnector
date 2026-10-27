@@ -8,6 +8,12 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from api_usage_logger import log_usage
+from website_planning import (
+    build_design_blueprint,
+    build_seo_strategy,
+    discover_admire_references,
+    validate_seo_html,
+)
 
 
 load_dotenv()
@@ -35,6 +41,8 @@ The goal is natural, useful, conversion-focused local SEO content.
 Return ONLY valid JSON with exactly these keys:
 
 {
+  "meta_title": "",
+  "meta_description": "",
   "headline": "",
   "subheadline": "",
   "intro": "",
@@ -57,6 +65,12 @@ Return ONLY valid JSON with exactly these keys:
 }
 
 CONTENT RULES:
+
+SEO METADATA:
+- Provide a natural title tag, ideally 30–60 characters, using the business name and relevant service/location only when verified.
+- Provide a useful meta description, ideally 70–160 characters, accurately describing the page.
+- Follow the supplied SEO strategy and keyword ideas, but never claim heuristic ideas have search-volume data.
+- Do not repeat keywords unnaturally or create location pages for unverified service areas.
 
 HEADLINE:
 - Under 12 words.
@@ -739,7 +753,7 @@ def phone_link(phone):
     )
 
 
-def generate_copy(business, handoff):
+def generate_copy(business, handoff, seo_strategy=None):
     api_key = os.getenv("DEEPSEEK_API_KEY")
 
     if not api_key:
@@ -756,6 +770,7 @@ def generate_copy(business, handoff):
         {
             "business": business,
             "ai_handoff": handoff,
+            "seo_strategy": seo_strategy or {},
         },
         ensure_ascii=False,
         indent=2,
@@ -807,10 +822,11 @@ def generate_copy(business, handoff):
         )
 
 
-def build_html(business, copy):
+def build_html(business, copy, seo_strategy=None):
     name = get_business_name(business, {})
     business_type = get_business_type(business)
     business_type_title = business_type.title()
+    seo_strategy = seo_strategy if isinstance(seo_strategy, dict) else {}
 
     phone = business.get("phone", "")
     address = business.get("address", "")
@@ -880,6 +896,28 @@ def build_html(business, copy):
         "cta_text",
         "",
     )
+
+    meta_title = str(copy.get("meta_title") or seo_strategy.get("recommended_title") or f"{name} | {business_type_title}")
+    meta_description = str(copy.get("meta_description") or seo_strategy.get("recommended_meta_description") or subheadline or intro[:157])
+    canonical_url = seo_strategy.get("canonical_url")
+    canonical_html = (
+        '<link rel="canonical" href="' + escape(str(canonical_url), quote=True) + '>'
+        if canonical_url else ""
+    )
+    structured_data = {
+        "@context": "https://schema.org",
+        "@type": "LocalBusiness",
+        "name": str(name),
+    }
+    if phone:
+        structured_data["telephone"] = str(phone)
+    if address:
+        structured_data["address"] = str(address)
+    if website and str(website).startswith(("https://", "http://")):
+        structured_data["url"] = str(website)
+    if business.get("email"):
+        structured_data["email"] = str(business["email"])
+    structured_data_json = json.dumps(structured_data, ensure_ascii=False).replace("</", "<\\/")
 
     phone_html = phone_link(phone)
 
@@ -1062,19 +1100,14 @@ def build_html(business, copy):
     content="width=device-width,initial-scale=1"
 >
 
-<title>
-    {escape(str(name))} | {escape(str(business_type_title))}
-</title>
-
-<meta
-    name="description"
-    content="{escape(str(subheadline))}"
->
-
-<link
-    rel="stylesheet"
-    href="styles.css"
->
+<title>{escape(meta_title)}</title>
+<meta name="description" content="{escape(meta_description, quote=True)}">
+<meta property="og:title" content="{escape(meta_title, quote=True)}">
+<meta property="og:description" content="{escape(meta_description, quote=True)}">
+<meta property="og:type" content="website">
+{canonical_html}
+<script type="application/ld+json">{structured_data_json}</script>
+<link rel="stylesheet" href="styles.css">
 
 </head>
 
@@ -1482,14 +1515,32 @@ def generate_website(handoff_path):
         business_path
     )
 
+    seo_strategy = build_seo_strategy(business, handoff)
+    category = seo_strategy.get("business_type", "local business")
+    reference_research = discover_admire_references(category)
+    curated_references = handoff.get("design_references", []) if isinstance(handoff, dict) else []
+    if isinstance(curated_references, list):
+        seen_reference_urls = {item.get("url") for item in reference_research.get("references", []) if isinstance(item, dict)}
+        for item in curated_references:
+            if isinstance(item, dict) and item.get("url") and item.get("url") not in seen_reference_urls:
+                reference_research.setdefault("references", []).append(item)
+                seen_reference_urls.add(item.get("url"))
+    design_blueprint = build_design_blueprint(business, seo_strategy, reference_research)
+    project_dir = handoff_path.parent
+    (project_dir / "SEO_STRATEGY.json").write_text(json.dumps(seo_strategy, indent=2, ensure_ascii=False), encoding="utf-8")
+    (project_dir / "DESIGN_REFERENCES.json").write_text(json.dumps(reference_research, indent=2, ensure_ascii=False), encoding="utf-8")
+    (project_dir / "DESIGN_BLUEPRINT.json").write_text(json.dumps(design_blueprint, indent=2, ensure_ascii=False), encoding="utf-8")
+
     copy = generate_copy(
         business,
         handoff,
+        seo_strategy,
     )
 
     html = build_html(
         business,
         copy,
+        seo_strategy,
     )
 
     output_dir = (
@@ -1512,6 +1563,12 @@ def generate_website(handoff_path):
 
     (output_dir / "script.js").write_text(
         JS,
+        encoding="utf-8",
+    )
+
+    seo_qa = validate_seo_html(html, business, seo_strategy)
+    (project_dir / "SEO_QA_REPORT.json").write_text(
+        json.dumps(seo_qa, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
