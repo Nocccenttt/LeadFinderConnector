@@ -1,0 +1,391 @@
+'use strict';
+(() => {
+  const $ = id => document.getElementById(id);
+  const running = job => job && ['starting', 'queued', 'running'].includes(job.status);
+  const keyOf = lead => `${lead.priority}::${encodeURIComponent(lead.client_id)}`;
+  const state = {leads:[], selected:null, priority:'ALL', website:'ALL', jobs:new Map(), search:null,
+    workspace:'', capabilities:{}, device:innerWidth < 800 ? 'mobile' : 'desktop', connected:false};
+  const watching = new Set();
+  const preview = {key:null, url:null, status:'empty', token:0, controller:null, timeout:null};
+  let rebuildKey = null;
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  function node(tag, className, text) {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text !== undefined) element.textContent = text;
+    return element;
+  }
+  function selectedLead() { return state.leads.find(lead => keyOf(lead) === state.selected); }
+  function readStorage(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } }
+  function saveStorage(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Storage is optional in private/restricted browsers. */ } }
+  function savePreferences() {
+    if (!state.workspace) return;
+    saveStorage(`leadfinder:${state.workspace}`, {selected:state.selected, device:state.device,
+      jobs:[...state.jobs.values()].filter(running), search:running(state.search) ? state.search : null});
+  }
+  function setConnection(connected) {
+    state.connected = connected;
+    $('connection').classList.toggle('connected', connected);
+    $('connection').textContent = connected ? 'Workspace connected' : 'Connection interrupted';
+  }
+  async function api(url, options = {}) {
+    const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000);
+    const response = await fetch(url, {...options,signal});
+    let data;
+    try { data = await response.json(); } catch { throw new Error('The workspace returned an unreadable response. Try again.'); }
+    if (!response.ok) {
+      const error = new Error(data.error || data.message || `Request failed (${response.status}).`);
+      error.status = response.status;
+      throw error;
+    }
+    return data;
+  }
+  function workspaceError(message) {
+    $('workspace-error-text').textContent = message;
+    $('workspace-error').hidden = !message;
+  }
+  function filteredLeads() {
+    const query = $('lead-search').value.trim().toLocaleLowerCase();
+    return state.leads.filter(lead => {
+      const searchable = [lead.name, lead.address, lead.category, lead.reason].join(' ').toLocaleLowerCase();
+      const job = state.jobs.get(keyOf(lead));
+      const status = running(job) ? 'working' : job?.status === 'error' ? 'failed' : lead.preview_state || (lead.demo_ready ? 'ready' : 'missing');
+      return (!query || searchable.includes(query)) && (state.priority === 'ALL' || lead.priority === state.priority) &&
+        (state.website === 'ALL' || state.website === status || (state.website === 'missing' && status === 'incomplete'));
+    });
+  }
+  function renderList() {
+    const list = $('business-list');
+    const focusedKey = list.contains(document.activeElement) ? document.activeElement.dataset.key : null;
+    list.replaceChildren();
+    list.setAttribute('aria-busy','false');
+    const filtered = filteredLeads();
+    $('visible-count').textContent = `${filtered.length} ${filtered.length === 1 ? 'business' : 'businesses'}`;
+    $('saved-count').textContent = `${state.leads.length} saved · ${state.leads.filter(lead => lead.demo_ready).length} websites ready`;
+    document.querySelectorAll('[data-priority]').forEach(button => {
+      const active = button.dataset.priority === state.priority;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    document.querySelectorAll('[data-count]').forEach(count => {
+      count.textContent = count.dataset.count === 'ALL' ? state.leads.length : state.leads.filter(lead => lead.priority === count.dataset.count).length;
+    });
+    if (!filtered.length) {
+      const empty = node('div','list-empty');
+      empty.append(node('h3','',state.leads.length ? 'No matching businesses.' : 'Your next client starts here.'),
+        node('p','',state.leads.length ? 'Try another search or clear your filters.' : 'Find businesses to add them to this workspace.'));
+      const action = node('button','button',state.leads.length ? 'Clear filters' : 'Find businesses');
+      action.type = 'button';
+      action.addEventListener('click', () => {
+        if (!state.leads.length) return openSearch();
+        $('lead-search').value = ''; $('website-filter').value = 'ALL'; state.website = 'ALL'; state.priority = 'ALL'; renderList();
+      });
+      empty.append(action); list.append(empty); return;
+    }
+    const tabKey = filtered.some(lead => keyOf(lead) === state.selected) ? state.selected : keyOf(filtered[0]);
+    filtered.forEach(lead => {
+      const key = keyOf(lead), job = state.jobs.get(key), busy = running(job);
+      const row = node('button','lead-row');
+      row.type = 'button'; row.dataset.key = key; row.setAttribute('role','option');
+      row.setAttribute('aria-selected', String(state.selected === key)); row.tabIndex = key === tabKey ? 0 : -1;
+      const top = node('span','lead-row-top');
+      top.append(node('span','lead-row-name',lead.name || 'Unnamed business'),node('span','lead-score',String(lead.score ?? '')));
+      row.append(top,node('span','lead-location',lead.address || 'No address recorded'));
+      const bottom = node('span','lead-row-bottom');
+      const label = busy ? 'Building website…' : job?.status === 'error' || lead.preview_state === 'failed' ? 'Needs attention' : lead.demo_ready ? 'Website ready' : 'Not built yet';
+      bottom.append(node('span',`priority-label ${lead.priority.toLowerCase()}`,lead.priority[0] + lead.priority.slice(1).toLowerCase()),
+        node('span',`row-website-status ${busy ? 'working' : lead.demo_ready ? 'ready' : ''}`,label));
+      row.append(bottom);
+      row.addEventListener('click', () => selectLead(key, true));
+      row.addEventListener('keydown', event => {
+        const keys = ['ArrowUp','ArrowDown','Home','End'];
+        if (!keys.includes(event.key)) return;
+        event.preventDefault();
+        const index = filtered.findIndex(item => keyOf(item) === key);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? filtered.length - 1 : Math.max(0,Math.min(filtered.length - 1,index + (event.key === 'ArrowDown' ? 1 : -1)));
+        selectLead(keyOf(filtered[next]), false);
+      });
+      list.append(row);
+    });
+    if (focusedKey) [...list.children].find(row => row.dataset.key === focusedKey)?.focus({preventScroll:true});
+  }
+  function selectLead(key, pointer) {
+    if (!state.leads.some(lead => keyOf(lead) === key)) return;
+    const changed = state.selected !== key;
+    state.selected = key; savePreferences(); renderList(); renderSelection(changed);
+    const row = [...$('business-list').children].find(element => element.dataset.key === key);
+    row?.focus({preventScroll:true}); row?.scrollIntoView({block:'nearest'});
+    if (pointer && innerWidth < 800) $('detail-panel').scrollIntoView({block:'start'});
+  }
+  async function loadLeads() {
+    $('refresh-button').disabled = true;
+    try {
+      const data = await api('/leads');
+      if (!Array.isArray(data.leads)) throw new Error('The business list could not be read. Try refreshing.');
+      state.leads = data.leads;
+      if (state.selected && !selectedLead()) state.selected = null;
+      setConnection(true); workspaceError(''); renderList(); renderSelection();
+      return true;
+    } catch (error) {
+      setConnection(false); workspaceError(`Could not load saved businesses. ${error.message}`);
+      $('business-list').setAttribute('aria-busy','false');
+      if (!state.leads.length) $('business-list').replaceChildren(node('div','list-empty','The business list is unavailable. Use Retry above to reconnect.'));
+      return false;
+    } finally { $('refresh-button').disabled = false; }
+  }
+  function renderSelection(forcePreview = false) {
+    const lead = selectedLead();
+    $('detail-panel').dataset.hasSelection = String(Boolean(lead));
+    $('selection-empty').hidden = Boolean(lead); $('selected-workspace').hidden = !lead;
+    if (!lead) { resetPreview(); return; }
+    const job = state.jobs.get(state.selected), busy = running(job);
+    $('selected-name').textContent = lead.name || 'Unnamed business';
+    $('selected-address').textContent = lead.address || 'No address recorded';
+    const reason = Array.isArray(lead.reason) ? lead.reason.join(' · ') : String(lead.reason || '');
+    $('selected-reason').textContent = reason ? `Opportunity: ${reason}` : '';
+    $('selected-reason').hidden = !reason;
+    $('selected-priority').className = `priority-label ${lead.priority.toLowerCase()}`;
+    $('selected-priority').textContent = lead.priority[0] + lead.priority.slice(1).toLowerCase() + ' priority';
+    $('selected-score').textContent = lead.score ? `Opportunity score ${lead.score}` : '';
+    const contacts = $('contact-links'); contacts.replaceChildren();
+    if (lead.phone) { const link = node('a','',lead.phone); link.href = `tel:${String(lead.phone).replace(/[^+\d]/g,'')}`; contacts.append(link); }
+    if (lead.website) {
+      try { const url = new URL(lead.website); if (['http:','https:'].includes(url.protocol)) { const link = node('a','','Original website ↗'); link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer'; contacts.append(link); } } catch { /* A missing/invalid source URL has no link. */ }
+    }
+    const ready = Boolean(lead.demo_ready);
+    $('website-state').className = `state-label ${busy ? 'working' : ready ? 'ready' : ''}`;
+    $('website-state').textContent = busy ? 'Building website' : job?.status === 'error' || lead.preview_state === 'failed' ? 'Last build needs attention' : ready ? 'Preview ready' : 'Not built yet';
+    const configured = state.capabilities.website_configured !== false;
+    $('build-message').textContent = busy ? job.message || 'Researching, writing and building. This can take a few minutes.' :
+      !configured ? 'Website generation is not configured in this workspace.' : !lead.can_generate ? 'Website builds are available for high- and medium-priority businesses with a saved handoff.' :
+      lead.preview_state === 'failed' ? lead.preview_message : job?.status === 'complete' ? 'Your website is ready to review and download.' : ready ? 'Redesign keeps the saved copy. Rebuild is available under more actions.' : 'Create a website to get a working preview and downloadable files.';
+    $('build-button').hidden = ready; $('build-button').disabled = busy || !lead.can_generate || !configured;
+    $('build-button').textContent = busy ? 'Building…' : 'Build website';
+    $('redesign-button').hidden = !ready || !lead.can_generate; $('redesign-button').disabled = busy || !configured;
+    $('download-button').hidden = !ready; $('download-button').disabled = busy || lead.preview_state === 'failed';
+    $('more-actions').hidden = !ready || !lead.can_generate || busy; $('more-actions').open = false;
+    $('rebuild-button').disabled = !configured;
+    $('job-error').hidden = job?.status !== 'error'; $('job-error').textContent = job?.status === 'error' ? job.message : '';
+    $('open-preview').setAttribute('aria-disabled', String(!ready || busy));
+    if (ready) $('open-preview').href = lead.demo_url; else $('open-preview').removeAttribute('href');
+    $('retry-preview').disabled = !ready || busy;
+    document.querySelectorAll('[data-device]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.device === state.device)));
+    if (forcePreview || preview.key !== state.selected || (ready && preview.url !== lead.demo_url && preview.status !== 'loading')) loadPreview(lead);
+  }
+  function resetPreview() {
+    preview.controller?.abort(); clearTimeout(preview.timeout); preview.token += 1;
+    preview.key = null; preview.url = null; preview.status = 'empty';
+    $('preview-frame').onload = null; $('preview-frame').src = 'about:blank'; $('frame-stage').hidden = true;
+  }
+  function showPlaceholder(kind, title, description) {
+    preview.status = kind;
+    $('frame-stage').hidden = true; $('preview-placeholder').hidden = false;
+    $('preview-title').textContent = title; $('preview-description').textContent = description;
+    $('preview-indicator').classList.toggle('loading', kind === 'loading');
+    $('preview-indicator').textContent = kind === 'loading' ? '' : kind === 'error' ? '!' : '↗';
+    $('preview-retry-button').hidden = kind !== 'error';
+    $('preview-canvas').setAttribute('aria-busy',String(kind === 'loading'));
+  }
+  function localPreviewURL(value) {
+    const url = new URL(value, location.origin);
+    if (url.origin !== location.origin || !url.pathname.startsWith('/demo/')) throw new Error('The preview address is invalid. Refresh this business and try again.');
+    return url;
+  }
+  async function loadPreview(lead) {
+    preview.controller?.abort(); clearTimeout(preview.timeout);
+    const token = ++preview.token, key = keyOf(lead), controller = new AbortController();
+    preview.controller = controller; preview.key = key; preview.url = lead.demo_url || null;
+    $('preview-frame').onload = null; $('preview-frame').src = 'about:blank';
+    showPlaceholder('loading','Checking the preview…','Making sure the website is available before opening it.');
+    const current = () => token === preview.token && key === state.selected;
+    try {
+      const info = await api(`/preview-status?priority=${encodeURIComponent(lead.priority)}&name=${encodeURIComponent(lead.client_id)}`, {signal:controller.signal});
+      if (!current()) return;
+      if (!info.available) {
+        showPlaceholder('empty',info.state === 'missing' ? 'No website yet.' : 'This website needs a new build.',info.message || 'Build a website to see a complete preview here.');
+        return;
+      }
+      const url = localPreviewURL(info.preview_url);
+      url.searchParams.set('preview',String(Date.now()));
+      const response = await fetch(url, {cache:'no-store',signal:controller.signal});
+      if (!response.ok) throw new Error(`The preview could not be opened (${response.status}). Try loading it again.`);
+      if (!current()) return;
+      preview.url = info.preview_url;
+      const frame = $('preview-frame');
+      showPlaceholder('loading','Opening the website…','The preview will appear here in a moment.'); fitPreview();
+      frame.onload = () => {
+        if (!current()) return;
+        try {
+          if (frame.contentWindow.location.href === 'about:blank') return;
+          if (!frame.contentDocument?.body || !frame.contentDocument.body.textContent.trim()) throw new Error('The generated page is empty. Rebuild it to create a complete preview.');
+          clearTimeout(preview.timeout); preview.status = 'ready';
+          $('preview-placeholder').hidden = true; $('frame-stage').hidden = false;
+          $('preview-canvas').setAttribute('aria-busy','false'); fitPreview();
+        } catch (error) { clearTimeout(preview.timeout); showPlaceholder('error','Could not display the preview.',error.message); }
+      };
+      frame.onerror = () => { if (current()) { clearTimeout(preview.timeout); showPlaceholder('error','Could not load the preview.','Try again, or open the website in a new tab.'); } };
+      frame.src = url.href;
+      preview.timeout = setTimeout(() => { if (current() && preview.status === 'loading') showPlaceholder('error','The preview is taking longer than expected.','Try loading it again, or open the website in a new tab.'); },15000);
+    } catch (error) {
+      if (current() && error.name !== 'AbortError') showPlaceholder('error','Could not load the preview.',error.message);
+    }
+  }
+  function fitPreview() {
+    const canvas = $('preview-canvas'), frame = $('preview-frame'), stage = $('frame-stage');
+    if (canvas.clientWidth <= 0) return;
+    const width = state.device === 'mobile' ? 390 : 1440;
+    const scale = Math.min(1,Math.max(.1,(canvas.clientWidth - 42) / width));
+    const height = Math.min(state.device === 'mobile' ? 844 : 1800,Math.max(300,Math.round((canvas.clientHeight - 42) / scale)));
+    frame.style.width = `${width}px`; frame.style.height = `${height}px`; frame.style.transform = `scale(${scale})`;
+    stage.style.width = `${width * scale + 2}px`; stage.style.height = `${height * scale + 2}px`;
+    stage.classList.toggle('mobile',state.device === 'mobile');
+    $('preview-size').textContent = `${width}px · Fit ${Math.round(scale * 100)}%`;
+  }
+  function openSearch() {
+    if (running(state.search)) { $('search-progress').scrollIntoView({block:'start'}); return; }
+    $('search-form-error').hidden = true;
+    $('find-dialog').showModal();
+  }
+  async function beginBuild(preserveContent) {
+    const lead = selectedLead();
+    if (!lead || running(state.jobs.get(state.selected))) return;
+    const key = keyOf(lead), starting = {key,priority:lead.priority,client_id:lead.client_id,kind:'website',status:'starting',started_at:Date.now()/1000,message:'Starting the website build…'};
+    state.jobs.set(key,starting); savePreferences(); renderList(); renderSelection();
+    try {
+      const result = await api('/generate-landing-page',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({priority:lead.priority,name:lead.client_id,preserve_content:preserveContent})});
+      const job = {...starting,job_id:result.job_id,status:'queued'};
+      state.jobs.set(key,job); savePreferences(); watchWebsite(job); renderList(); if (state.selected === key) renderSelection();
+    } catch (error) {
+      await readSession(false).catch(() => {});
+      const recovered = state.jobs.get(key);
+      if (!recovered?.job_id || !running(recovered)) state.jobs.set(key,{...starting,status:'error',message:error.message});
+      savePreferences(); renderList(); if (state.selected === key) renderSelection();
+    }
+  }
+  async function watchWebsite(job) {
+    if (!job.job_id || watching.has(job.job_id)) return;
+    watching.add(job.job_id);
+    try {
+      while (state.jobs.get(job.key)?.job_id === job.job_id && running(state.jobs.get(job.key))) {
+        try {
+          const update = await api(`/landing-page-status?job_id=${encodeURIComponent(job.job_id)}`);
+          setConnection(true); Object.assign(job,update);
+          state.jobs.set(job.key,job); savePreferences(); renderList();
+          if (state.selected === job.key) renderSelection();
+          if (!running(job)) {
+            await loadLeads();
+            if (state.selected === job.key && job.status === 'complete' && selectedLead()) await loadPreview(selectedLead());
+            $('announcement').textContent = job.status === 'complete' ? `Website ready for ${state.leads.find(lead => keyOf(lead) === job.key)?.name || 'your business'}.` : 'A website build needs attention.';
+            break;
+          }
+        } catch (error) {
+          if (error.status === 404) {
+            await loadLeads();
+            const lead = state.leads.find(item => keyOf(item) === job.key);
+            if (lead?.demo_ready) state.jobs.delete(job.key);
+            else state.jobs.set(job.key,{...job,status:'error',message:'This build session is no longer available. Your saved businesses are still here; you can start the build again.'});
+            savePreferences(); renderList(); if (state.selected === job.key) renderSelection(); break;
+          }
+          setConnection(false); job.message = 'Connection interrupted. The build may still be running; reconnecting…';
+          if (state.selected === job.key) renderSelection();
+        }
+        await sleep(state.connected ? 1000 : 3000);
+      }
+    } finally { watching.delete(job.job_id); }
+  }
+  function renderSearch(job) {
+    $('search-progress').hidden = false;
+    $('search-phase').textContent = job.status === 'error' ? 'Search needs attention' : job.phase || (job.status === 'complete' ? 'Search complete' : 'Finding businesses…');
+    $('search-message').textContent = [job.message,job.current_business].filter(Boolean).join(' · ');
+    $('search-progress-bar').value = job.status === 'complete' ? 100 : Math.max(0,Math.min(100,Number(job.percent || 0)));
+    $('search-count').textContent = job.total ? `${job.current_index || 0} of ${job.total} businesses checked` : job.status === 'complete' ? 'Your saved businesses are updated.' : 'Preparing the search…';
+    $('search-counts').textContent = `${job.high || 0} high · ${job.medium || 0} medium · ${job.low || 0} low`;
+    $('search-again').hidden = running(job);
+    $('find-button').disabled = running(job); $('search-submit').disabled = running(job);
+    $('activity-log').replaceChildren(...(job.log || []).map(line => node('div',`activity-line ${line.type === 'error' ? 'error' : ''}`,line.text)));
+  }
+  async function watchSearch(job) {
+    if (!job?.job_id || watching.has(job.job_id)) return;
+    watching.add(job.job_id);
+    try {
+      while (state.search?.job_id === job.job_id && running(state.search)) {
+        try {
+          const update = await api(`/job-status?job_id=${encodeURIComponent(job.job_id)}`);
+          setConnection(true); Object.assign(job,update); state.search = job; savePreferences(); renderSearch(job);
+          if (!running(job)) { await loadLeads(); break; }
+        } catch (error) {
+          if (error.status === 404) { job.status = 'error'; job.message = 'This search session has ended. Refresh your saved businesses, or start another search.'; renderSearch(job); savePreferences(); await loadLeads(); break; }
+          setConnection(false); job.message = 'Connection interrupted. The search may still be running; reconnecting…'; renderSearch(job);
+        }
+        await sleep(state.connected ? 1000 : 3000);
+      }
+    } finally { watching.delete(job.job_id); }
+  }
+  async function readSession(restore) {
+    const session = await api('/session');
+    state.workspace = session.workspace_id; state.capabilities = session.capabilities || {};
+    if (restore) {
+      const saved = readStorage(`leadfinder:${state.workspace}`,{});
+      state.selected = saved.selected || null;
+      if (['desktop','mobile'].includes(saved.device)) state.device = saved.device;
+      for (const job of saved.jobs || []) if (job.key && job.job_id) state.jobs.set(job.key,job);
+      if (saved.search?.job_id) state.search = saved.search;
+    }
+    for (const active of session.active_jobs || []) {
+      if (active.kind === 'website' && active.client_id) {
+        const job = {...active,key:keyOf(active)}; state.jobs.set(job.key,job);
+      } else if (active.kind === 'leads') state.search = active;
+    }
+    setConnection(true);
+    for (const job of state.jobs.values()) if (running(job)) watchWebsite(job);
+    if (running(state.search)) { renderSearch(state.search); watchSearch(state.search); }
+    return session;
+  }
+  $('find-button').addEventListener('click',openSearch);
+  $('search-again').addEventListener('click',openSearch);
+  document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click',() => $(button.dataset.close).close()));
+  $('find-form').addEventListener('submit',async event => {
+    event.preventDefault();
+    const niche = $('niche').value.trim(), area = $('area').value.trim();
+    if (!niche || !area || running(state.search)) return;
+    $('search-submit').disabled = true; $('search-form-error').hidden = true;
+    try {
+      const result = await api('/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({niche,area,max_results:Number($('max-results').value)})});
+      const job = {job_id:result.job_id,kind:'leads',status:'queued',started_at:Date.now()/1000,message:`Searching for ${niche} in ${area}…`};
+      state.search = job; savePreferences(); $('find-dialog').close(); renderSearch(job); watchSearch(job);
+    } catch (error) {
+      $('search-form-error').textContent = error.message; $('search-form-error').hidden = false;
+      $('search-submit').disabled = false;
+    }
+  });
+  document.querySelectorAll('[data-priority]').forEach(button => button.addEventListener('click',()=>{state.priority = button.dataset.priority;renderList();}));
+  $('lead-search').addEventListener('input',renderList);
+  $('website-filter').addEventListener('change',()=>{state.website = $('website-filter').value;renderList();});
+  async function refresh() { try { await readSession(false); } catch { /* loadLeads supplies the visible connection error. */ } await loadLeads(); }
+  $('refresh-button').addEventListener('click',refresh); $('retry-workspace').addEventListener('click',refresh);
+  $('export-button').addEventListener('click',()=>{location.href = '/export';});
+  $('build-button').addEventListener('click',()=>beginBuild(false)); $('redesign-button').addEventListener('click',()=>beginBuild(true));
+  $('rebuild-button').addEventListener('click',()=>{const lead = selectedLead();if(!lead)return;rebuildKey = state.selected;$('rebuild-name').textContent = lead.name;$('more-actions').open = false;$('rebuild-dialog').showModal();});
+  $('confirm-rebuild').addEventListener('click',()=>{$('rebuild-dialog').close();if (rebuildKey === state.selected) beginBuild(false);});
+  $('download-button').addEventListener('click',()=>{const lead = selectedLead();if (lead?.download_url && !running(state.jobs.get(state.selected))) location.href = lead.download_url;});
+  $('retry-preview').addEventListener('click',()=>{const lead = selectedLead();if(lead)loadPreview(lead);});
+  $('preview-retry-button').addEventListener('click',()=>{const lead = selectedLead();if(lead)loadPreview(lead);});
+  $('open-preview').addEventListener('click',event=>{if($('open-preview').getAttribute('aria-disabled') === 'true')event.preventDefault();});
+  document.querySelectorAll('[data-device]').forEach(button=>button.addEventListener('click',()=>{state.device = button.dataset.device;savePreferences();renderSelection();fitPreview();}));
+  $('back-to-businesses').addEventListener('click',()=>{
+    const previous = state.selected;
+    state.selected = null; savePreferences(); renderList(); renderSelection();
+    $('business-panel').scrollIntoView({block:'start'});
+    [...$('business-list').children].find(row=>row.dataset.key === previous)?.focus({preventScroll:true});
+  });
+  new ResizeObserver(fitPreview).observe($('preview-canvas'));
+  addEventListener('pointerdown',()=>document.body.dataset.input = 'pointer',{capture:true,passive:true});
+  addEventListener('keydown',()=>document.body.dataset.input = 'keyboard',true);
+  setInterval(()=>{
+    if (state.search) { const seconds = Math.max(0,Math.floor(Date.now()/1000 - (state.search.started_at || Date.now()/1000))); if (running(state.search)) $('search-elapsed').textContent = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds/60)}m ${seconds%60}s`; }
+  },1000);
+  (async()=>{
+    try { await readSession(true); } catch { setConnection(false); }
+    await loadLeads();
+  })();
+})();
