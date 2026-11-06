@@ -6,6 +6,7 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 from website_planning import build_seo_strategy, validate_seo_html
 from color_foundation import contrast
+from reference_composition import validate_blueprint
 
 
 FORBIDDEN_CLAIMS = [
@@ -82,6 +83,25 @@ def validate(client_folder):
     report["checks"]["seo"] = seo_report
     report["warnings"].extend(seo_report.get("warnings", []))
 
+    design_file = website_folder / "design_spec.json"
+    if design_file.is_file():
+        design = json.loads(design_file.read_text(encoding="utf-8"))
+        if design.get("page_blueprint"):
+            composition_issues = []
+            try:
+                references = json.loads((client_folder / "DESIGN_REFERENCES.json").read_text(encoding="utf-8"))["references"]
+                blueprint = validate_blueprint(design, references)
+                sections = BeautifulSoup(html, "html.parser").select("main>section")
+                expected = [(section["key"], str(section["reference_section"])) for section in blueprint["sections"]]
+                actual = [(section.get("data-section"), section.get("data-reference-section")) for section in sections]
+                if actual != expected:
+                    composition_issues.append("Rendered sections do not match the reference blueprint")
+            except (OSError, ValueError, TypeError, KeyError) as error:
+                composition_issues.append(str(error))
+            report["checks"]["composition"] = {"status": "NEEDS REVIEW" if composition_issues else "PASS",
+                                                 "issues": composition_issues,
+                                                 "scope": "Blueprint/source mapping and rendered section coverage; visual checks are separate."}
+
     color_file = client_folder / "COLOR_FOUNDATION.json"
     if color_file.is_file():
         foundation = {}
@@ -120,6 +140,7 @@ def validate(client_folder):
         and report["checks"]["html"]["status"] == "PASS"
         and seo_report.get("status") == "PASS"
         and report["checks"].get("colors", {}).get("status", "PASS") == "PASS"
+        and report["checks"].get("composition", {}).get("status", "PASS") == "PASS"
         and not any("Potential unsupported claim" in warning for warning in report["warnings"])
         else "NEEDS REVIEW"
     )

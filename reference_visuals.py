@@ -15,7 +15,16 @@ MEASURE_DESIGN = """() => {
     const describe = el => { const s=getComputedStyle(el); return {tag:el.tagName,text:el.innerText?.slice(0,100),rect:rect(el),font:s.fontFamily,size:s.fontSize,weight:s.fontWeight,lineHeight:s.lineHeight,color:s.color,background:s.backgroundColor,radius:s.borderRadius,display:s.display,padding:s.padding}; };
     const headings=[...document.querySelectorAll('h1,h2')].filter(visible).slice(0,8).map(describe);
     const images=[...document.images].filter(el=>visible(el)&&!el.closest('header,nav,[role="navigation"]')).slice(0,12).map(el=>({rect:rect(el),fit:getComputedStyle(el).objectFit,alt:el.alt}));
-    const sections=[...document.querySelectorAll('main>section,main>div,body>section')].filter(visible).slice(0,6).map(describe);
+    const sections=[...document.querySelectorAll('main>section,main>div,body>section')].filter(visible).slice(0,10).map(el=>({
+        ...describe(el),
+        section_layouts:{
+            children:[...el.children].filter(visible).slice(0,8).map(describe),
+            headings:[...el.querySelectorAll('h1,h2,h3')].filter(visible).slice(0,6).map(describe),
+            images:[...el.querySelectorAll('img')].filter(visible).slice(0,6).map(image=>({rect:rect(image),fit:getComputedStyle(image).objectFit})),
+            grids:[...el.querySelectorAll('*')].filter(child=>visible(child)&&getComputedStyle(child).display==='grid').slice(0,4).map(child=>({rect:rect(child),columns:getComputedStyle(child).gridTemplateColumns,gap:getComputedStyle(child).gap})),
+            text_alignment:getComputedStyle(el).textAlign
+        }
+    }));
     const controls=[...document.querySelectorAll('button,a[class*="button"],a[class*="btn"]')].filter(visible).slice(0,5).map(describe);
     const htmlBackground=getComputedStyle(document.documentElement).backgroundColor;
     const canvas_background=htmlBackground==='rgba(0, 0, 0, 0)'?'rgb(255, 255, 255)':htmlBackground;

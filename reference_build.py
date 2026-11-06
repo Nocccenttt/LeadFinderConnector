@@ -27,6 +27,15 @@ def _font_family(value):
     return "system"
 
 
+def _section_metrics(section):
+    padding = str(section.get("padding") or "80px").split()
+    images = section.get("section_layouts", {}).get("images", [])
+    image = next((item.get("rect", {}) for item in images if _number(item.get("rect", {}).get("width"), 0) > 100), {})
+    return {"padding_top_px": _bounded(_number(padding[0], 80), 24, 160),
+            "padding_bottom_px": _bounded(_number(padding[2] if len(padding) >= 3 else padding[0], 80), 24, 160),
+            "image_ratio": round(max(.5, min(2.5, _number(image.get("width"), 4) / max(1, _number(image.get("height"), 3)))), 3)}
+
+
 def reference_build_plan(design, candidates):
     selected = design.get("reference_selection", {}).get("website_url")
     candidate = next((item for item in candidates if item.get("website_url") == selected), None)
@@ -100,6 +109,7 @@ def reference_build_plan(design, candidates):
         "selection_fit": design.get("reference_fit") or {"reason": design.get("reference_selection", {}).get("reason", "")},
         "selection_rule": "Transfer page architecture, visual tone, and service experience; exact industry is optional.",
         "tokens": tokens, "suggested_hero": suggested_hero,
+        "section_metrics": [_section_metrics(section) for section in observed.get("sections", [])],
         "implementation_scope": "Measured tokens and supported layout primitives; not a bespoke reconstruction of the reference.",
         "limitations": ["Lower-page architecture still uses the shared section renderer.",
                         "Font substitutions preserve broad family, not the original typeface.",

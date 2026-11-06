@@ -1,5 +1,17 @@
 # Reference design update
 
+## Composition renderer update
+
+New generations now use a validated reference-mapped composition tree for every
+included section. A dedicated architecture request receives the selected source
+and actual content slots; it no longer inherits the old eight-section rendering
+contract. See REFERENCE_COMPOSITION.md for schema, limits and verification.
+
+Two real reference builds using identical pet-business copy and photographs now
+render different hero structures, lower-page grouping and section selection.
+The main pet preview uses the Rudolph Care build. Earlier fixed-section and
+partial-transfer descriptions below apply to the saved legacy renderer.
+
 ## Current limitation found in the renderer
 
 Reference discovery is functioning, but full reference transfer is incomplete.

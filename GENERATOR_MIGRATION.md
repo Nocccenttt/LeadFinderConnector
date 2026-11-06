@@ -13,7 +13,7 @@ The old `deepseek_website_generator.py` command also delegates to the active gen
 3. Extract actual submitted website URLs using the known c-item markup from the v7 extractor.
 4. Fetch actual reference HTML and up to two linked stylesheets per candidate. Supply headings, text snapshots, frequent colors, font families, and grid/flex counts to DeepSeek. Public-address checks apply to each reference request and redirect.
 5. Let DeepSeek select one researched website and return its analysis, design system, section order, composition, copy, and image queries.
-6. Render the archived generator's photographic hero variants, palettes, section tones, composition choices, and responsive styles. Save the model's spec and researched candidates.
+6. Make a dedicated architecture request with only the selected reference and actual available copy. Validate its `page_blueprint`, including source indices and content coverage. Compose sections through nested layout primitives; the old section variants remain for saved legacy designs. Save the model spec, measured evidence, and implementation manifest.
 7. Download Pexels stock images locally. New image downloads save credit metadata. If the image API fails, the archived SVG placeholder fallback remains and is logged.
 8. Run the existing quality checks, status handling, delivery metadata, and sales-package flow.
 
