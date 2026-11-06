@@ -12,6 +12,21 @@ from test_reference_composition import spec, content
 
 @unittest.skipUnless(os.getenv("RUN_BROWSER_TESTS") == "1", "Enable RUN_BROWSER_TESTS for rendered composition checks")
 class RenderedCompositionTests(unittest.TestCase):
+    def test_unsemantic_but_visible_reference_content_is_measured(self):
+        from playwright.sync_api import sync_playwright
+        from reference_visuals import MEASURE_DESIGN
+        with sync_playwright() as runtime:
+            browser=runtime.chromium.launch()
+            try:
+                page=browser.new_page(viewport={'width':1440,'height':1000})
+                page.set_content('<div style="height:600px"><h1>Visible editorial reference</h1><p>A meaningful paragraph describing the actual visible page content.</p></div>')
+                measured=page.evaluate(MEASURE_DESIGN)
+                self.assertEqual(len(measured['sections']),1)
+                page.set_content('<header><nav>Work Profile News Contact</nav></header><div style="height:600px"><p style="opacity:0">A hidden paragraph must not become reference layout evidence.</p></div>')
+                self.assertEqual(page.evaluate(MEASURE_DESIGN)['sections'],[])
+            finally:
+                browser.close()
+
     def test_lower_page_collection_obeys_columns_and_mobile_reading_order(self):
         from playwright.sync_api import sync_playwright
         with sync_playwright() as runtime:

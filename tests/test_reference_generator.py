@@ -10,6 +10,22 @@ from website_validator import validate
 
 
 class ReferenceGeneratorTests(unittest.TestCase):
+    def test_blank_visual_reference_triggers_broader_readable_discovery(self):
+        from unittest.mock import Mock
+        def fetch(url, max_chars):
+            if 'inspiration/blank' in url:
+                return '<h1 class="c-item__title"><a href="https://blank.example/">Blank</a></h1>'
+            if 'inspiration/readable' in url:
+                return '<h1 class="c-item__title"><a href="https://readable.example/">Readable</a></h1>'
+            return '<title>Example</title><h1>Actual reference</h1>'
+        discoveries = [{'references':[{'url':'https://admiretheweb.com/inspiration/blank/'}]},
+                       {'references':[{'url':'https://admiretheweb.com/inspiration/readable/'}]}]
+        observations = [{'status':'unavailable','sections':[]}, {'status':'measured','sections':[{'padding':'80px'}]}]
+        with patch.object(generator,'discover_admire_references',side_effect=discoveries), patch.object(generator,'fetch_reference_page',side_effect=fetch), patch('reference_visuals.inspect_rendered_reference',side_effect=observations):
+            result = generator.get_reference_research({'business_type':'tree service'},{},visual=True)
+        self.assertEqual([candidate['website_url'] for candidate in result],['https://readable.example/'])
+        self.assertIn('Broader discovery',result[0]['discovery_note'])
+
     def test_current_business_type_schema_is_used_instead_of_business_name(self):
         business = {"business_name": "Example", "business_type": "tree service", "address": "1 Main St, Raleigh, NC 27615"}
         self.assertEqual(generator.get_niche(business, {}), "tree service")

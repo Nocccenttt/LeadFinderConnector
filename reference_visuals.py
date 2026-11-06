@@ -15,7 +15,13 @@ MEASURE_DESIGN = """() => {
     const describe = el => { const s=getComputedStyle(el); return {tag:el.tagName,text:el.innerText?.slice(0,100),rect:rect(el),font:s.fontFamily,size:s.fontSize,weight:s.fontWeight,lineHeight:s.lineHeight,color:s.color,background:s.backgroundColor,radius:s.borderRadius,display:s.display,padding:s.padding}; };
     const headings=[...document.querySelectorAll('h1,h2')].filter(visible).slice(0,8).map(describe);
     const images=[...document.images].filter(el=>visible(el)&&!el.closest('header,nav,[role="navigation"]')).slice(0,12).map(el=>({rect:rect(el),fit:getComputedStyle(el).objectFit,alt:el.alt}));
-    const sections=[...document.querySelectorAll('main>section,main>div,body>section')].filter(visible).slice(0,10).map(el=>({
+    let sectionElements=[...document.querySelectorAll('main>section,main>div,body>section')].filter(visible);
+    if(!sectionElements.length){
+        const candidates=[...document.querySelectorAll('article,[role="main"]>div,[data-section],body>div')];
+        sectionElements=candidates.filter(el=>visible(el)&&el.getBoundingClientRect().width>innerWidth*.45&&el.getBoundingClientRect().height>120&&
+            [...el.querySelectorAll('h1,h2,p,img,span,a')].some(child=>visible(child)&&!child.closest('header,nav,[role="navigation"]')&&(child.tagName==='IMG'||child.textContent.trim().length>35)));
+    }
+    const sections=sectionElements.slice(0,10).map(el=>({
         ...describe(el),
         section_layouts:{
             children:[...el.children].filter(visible).slice(0,8).map(describe),
@@ -74,12 +80,20 @@ def inspect_rendered_reference(url, output_dir=None):
                     pass
             page.evaluate("() => Promise.race([document.fonts.ready, new Promise(resolve => setTimeout(resolve, 2000))])")
             observations = page.evaluate(MEASURE_DESIGN)
+            if not observations.get("sections"):
+                # Trigger lazy/scroll-reveal content before declaring a render empty.
+                page.evaluate("() => {scrollTo(0,Math.min(500,document.body.scrollHeight));}")
+                page.wait_for_timeout(600)
+                page.evaluate("scrollTo(0,0)")
+                observations = page.evaluate(MEASURE_DESIGN)
             if output_dir:
                 folder = Path(output_dir)
                 folder.mkdir(parents=True, exist_ok=True)
                 filename = hashlib.sha256(url.encode()).hexdigest()[:12] + ".png"
                 page.screenshot(path=str(folder / filename), animations="disabled", timeout=15000)
                 observations["screenshot"] = filename
-            return {"status": "measured", "basis": "Rendered desktop computed styles and element geometry; mobile and motion not inspected.", **observations}
+            status = "measured" if observations.get("sections") else "unavailable"
+            return {"status": status, "basis": "Rendered desktop computed styles and element geometry; mobile and motion not inspected.",
+                    **({"note": "No usable content sections were visible; this source cannot ground a composition."} if status != "measured" else {}), **observations}
         finally:
             browser.close()

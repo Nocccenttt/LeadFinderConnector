@@ -11,3 +11,6 @@ Their copyright notices and SIL Open Font License texts are included alongside t
 The generator copies the fonts and license files into website/fonts/ when a
 rendered reference uses serif typography. They substitute for proprietary fonts;
 reference-site font files, photographs, logos, and branding are not copied.
+Geist.ttf and its OFL license are bundled from Google Fonts:
+https://github.com/google/fonts/tree/main/ofl/geist
+Used for the approved modern-minimal craft profile; bundled locally at generation.

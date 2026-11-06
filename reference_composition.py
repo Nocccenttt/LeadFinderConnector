@@ -12,6 +12,8 @@ from bs4 import BeautifulSoup
 
 
 SLOTS = {
+    "feature": {"eyebrow", "title", "text", "image"},
+    "guide": {"eyebrow", "title", "text", "items"},
     "hero": {"eyebrow", "title", "text", "actions", "location", "image"},
     "about": {"eyebrow", "title", "text", "image"},
     "services": {"eyebrow", "title", "text", "items"},
@@ -22,13 +24,13 @@ SLOTS = {
     "cta": {"eyebrow", "title", "text", "actions"},
 }
 REQUIRED = {key: {"title"} for key in SLOTS}
-for _key in ("hero", "about", "services", "local", "cta"):
+for _key in ("hero", "about", "services", "local", "cta", "feature", "guide"):
     REQUIRED[_key].add("text")
-for _key in ("services", "benefits", "process", "faq"):
+for _key in ("services", "benefits", "process", "faq", "guide"):
     REQUIRED[_key].add("items")
 for _key in ("hero", "cta"):
     REQUIRED[_key].add("actions")
-for _key in ("hero", "about"):
+for _key in ("hero", "feature"):
     REQUIRED[_key].add("image")
 
 BLUEPRINT_PROMPT = """
@@ -53,8 +55,9 @@ hero: eyebrow,title,text,actions,location,image;
 about: eyebrow,title,text,image; services: eyebrow,title,text,items;
 benefits/process/faq: eyebrow,title,items; local: eyebrow,title,text,location;
 cta: eyebrow,title,text,actions.
-Use every listed slot exactly once in each included section (eyebrow and location
-are optional). The renderer owns all content. Never add text, HTML, CSS, URLs or
+feature: eyebrow,title,text,image; guide: eyebrow,title,text,items.
+Use every required slot exactly once in each included section. Eyebrow, location
+and about.image are optional. The renderer owns all content. Never add text, HTML, CSS, URLs or
 claims to nodes. Preserve reading order within each text group. All grids collapse
 to a single column on mobile in DOM reading order. Avoid decorative numbering
 unless it serves ordered process content or is supported by the source.
@@ -73,18 +76,20 @@ def _number(value, low, high, name):
     return value
 
 
-def validate_blueprint(design, references=None):
+def validate_blueprint(design, references=None, available_sections=None):
     blueprint = design.get("page_blueprint")
     if not isinstance(blueprint, dict) or blueprint.get("version") != 1:
         raise ValueError("A version 1 page_blueprint is required")
     sections = blueprint.get("sections")
-    if not isinstance(sections, list) or not 2 <= len(sections) <= 8:
-        raise ValueError("Blueprint needs 2..8 sections")
+    if not isinstance(sections, list) or not 2 <= len(sections) <= 10:
+        raise ValueError("Blueprint needs 2..10 sections")
     keys = [section.get("key") for section in sections if isinstance(section, dict)]
     if len(keys) != len(sections) or any(key not in SLOTS for key in keys) or len(set(keys)) != len(keys):
         raise ValueError("Blueprint section keys must be supported and unique")
     if keys[0] != "hero" or "cta" not in keys:
         raise ValueError("Blueprint must start with hero and include cta")
+    if available_sections is not None and set(keys) - set(available_sections):
+        raise ValueError("Blueprint selected a section with no supplied content")
     source_sections = None
     if references is not None:
         selected = design.get("reference_selection", {}).get("website_url")
@@ -160,7 +165,7 @@ def _content_slots(html, key):
         "actions": ".actions" if key == "hero" else ".cta-actions",
         "location": ".location" if key == "hero" else ".location-box",
         "text": {"hero": ".hero-copy", "about": ".intro-copy,.large-copy", "services": ".section-heading p",
-                 "local": ".local-copy>p", "cta": ".cta-box>div>p"}.get(key, ".unused-slot"),
+                 "local": ".local-copy>p", "cta": ".cta-box>div>p", "feature": ".feature-copy", "guide": ".section-heading p"}.get(key, ".unused-slot"),
     }
     slots = {}
     for name, selector in selectors.items():
@@ -176,7 +181,7 @@ def _content_slots(html, key):
                     element["class"] = [c for c in classes if c in ("button", "primary", "secondary")]
             fragments.append(str(node))
         slots[name] = "".join(fragments)
-    items = soup.select({"services": ".service-card", "benefits": ".benefit-card", "process": ".process-card", "faq": "details"}.get(key, ".unused-slot"))
+    items = soup.select({"services": ".service-card", "benefits": ".benefit-card", "process": ".process-card", "faq": "details", "guide": ".guide-item"}.get(key, ".unused-slot"))
     slots["items"] = items
     return slots
 
@@ -193,6 +198,9 @@ def compose_sections(section_html, design):
     for section in blueprint["sections"]:
         key = section["key"]
         slots = _content_slots(section_html[key], key)
+        for slot in REQUIRED[key] - {"actions"}:
+            if not slots[slot]:
+                raise ValueError(f"No supplied content for {key}.{slot}")
 
         def render(node, path):
             if "slot" in node:
@@ -207,7 +215,8 @@ def compose_sections(section_html, design):
                                 if not node.get("numbered", False):
                                     element.decompose()
                                     continue
-                            element.attrs.pop("class", None)
+                            if element.get("class") != ["guide-prompt"]:
+                                element.attrs.pop("class", None)
                         items.append(str(item))
                     content = "".join(items)
                     classes = f"rc-items rc-treatment-{node.get('treatment', 'plain')}"
