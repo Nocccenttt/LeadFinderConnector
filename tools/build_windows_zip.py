@@ -41,11 +41,19 @@ def build_distribution(output, source=ROOT):
     for name in ('assets', 'static', 'templates', 'scripts'):
         files += [file for file in (source / name).rglob('*')
                   if file.is_file() and '__pycache__' not in file.parts and file.suffix.lower() in extensions]
+    # The font installers copy these notices together with their typefaces.
+    font_notices = ['assets/fonts/Geist-OFL.txt', 'assets/fonts/LibreCaslonDisplay-OFL.txt',
+                    'assets/fonts/LibreCaslonText-OFL.txt']
+    files += [source / name for name in font_notices]
+    font_readme = source / 'assets/fonts/README.txt'
+    if font_readme.is_file():
+        files.append(font_readme)
     required = ['preview_dashboard.py', 'api_settings.py', 'templates/dashboard.html', 'static/dashboard.js',
                 'scripts/Install-LeadFinder.ps1', 'scripts/Start-LeadFinder.ps1',
-                'scripts/Stop-LeadFinder.ps1', 'scripts/launch_dashboard.py', 'assets/fonts/Geist.ttf']
+                'scripts/Stop-LeadFinder.ps1', 'scripts/launch_dashboard.py', 'assets/fonts/Geist.ttf',
+                'assets/fonts/LibreCaslonDisplay-Regular.ttf', 'assets/fonts/LibreCaslonText.ttf', *font_notices]
     for name in required:
-        if source / name not in files:
+        if source / name not in files or not (source / name).is_file():
             raise ValueError(f'Required application file missing: {name}')
     output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(output, 'w', compression=ZIP_DEFLATED) as archive:

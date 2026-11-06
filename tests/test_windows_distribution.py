@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import importlib.util
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -19,6 +20,11 @@ class WindowsDistributionTests(unittest.TestCase):
                 'scripts/Install-LeadFinder.ps1': 'Write-Host setup', 'scripts/Start-LeadFinder.ps1': 'Write-Host start',
                 'scripts/Stop-LeadFinder.ps1': 'Write-Host stop', 'scripts/launch_dashboard.py': 'print("launch")',
                 'assets/fonts/Geist.ttf': 'test-font',
+                'assets/fonts/LibreCaslonDisplay-Regular.ttf': 'test-display-font',
+                'assets/fonts/LibreCaslonText.ttf': 'test-text-font',
+                'assets/fonts/Geist-OFL.txt': 'test-geist-license',
+                'assets/fonts/LibreCaslonDisplay-OFL.txt': 'test-display-license',
+                'assets/fonts/LibreCaslonText-OFL.txt': 'test-text-license',
                 '.env': 'PRIVATE-TEST-KEY', '.venv/secret.txt': 'PRIVATE-TEST-KEY',
                 'codex_handoffs/HIGH/Customer/business.json': 'PRIVATE-CUSTOMER-DATA',
                 'outputs/leads.csv': 'PRIVATE-CUSTOMER-DATA', 'logs/debug.log': 'PRIVATE-TEST-KEY',
@@ -45,3 +51,27 @@ class WindowsDistributionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 build_distribution(target, source=Path(folder))
             self.assertFalse(target.exists())
+
+    def test_extracted_package_can_install_all_fonts_without_the_source_checkout(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            archive = build_distribution(root / 'app.zip')
+            with ZipFile(archive) as package:
+                package.extractall(root / 'extracted')
+            app = root / 'extracted/LeadFinder/app'
+            output = root / 'website'
+            output.mkdir()
+            for name, function, arguments in [
+                ('premium_craft', 'install_craft_fonts', ()),
+                ('reference_build', 'install_reference_fonts', ({'status': 'grounded', 'tokens': {
+                    'heading_family': 'serif', 'body_family': 'serif'}},)),
+            ]:
+                spec = importlib.util.spec_from_file_location('packaged_' + name, app / (name + '.py'))
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                getattr(module, function)(output, *arguments)
+            expected = {'Geist.ttf', 'Geist-OFL.txt', 'LibreCaslonDisplay-Regular.ttf',
+                        'LibreCaslonDisplay-OFL.txt', 'LibreCaslonText.ttf', 'LibreCaslonText-OFL.txt'}
+            self.assertEqual({path.name for path in (output / 'fonts').iterdir()}, expected)
+            for name in expected:
+                self.assertEqual((output / 'fonts' / name).read_bytes(), (app / 'assets/fonts' / name).read_bytes())
