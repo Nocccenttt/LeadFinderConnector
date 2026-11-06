@@ -14,7 +14,7 @@ class WindowsDistributionTests(unittest.TestCase):
                 'INSTALL_LEADFINDER.bat': '@echo off', 'START_LEADFINDER.bat': '@echo off',
                 'STOP_LEADFINDER.bat': '@echo off', 'DOWNLOAD_LEADFINDER.bat': '@echo off',
                 '.env.example': 'DEEPSEEK_API_KEY=', 'requirements.txt': 'Flask',
-                'preview_dashboard.py': 'print("app")', 'reference_website_generator.py': 'print("generator")',
+                'preview_dashboard.py': 'print("app")', 'api_settings.py': 'print("settings")', 'reference_website_generator.py': 'print("generator")',
                 'templates/dashboard.html': '<h1>Workspace</h1>', 'static/dashboard.js': 'console.log("ready")',
                 'scripts/Install-LeadFinder.ps1': 'Write-Host setup', 'scripts/Start-LeadFinder.ps1': 'Write-Host start',
                 'scripts/Stop-LeadFinder.ps1': 'Write-Host stop', 'scripts/launch_dashboard.py': 'print("launch")',

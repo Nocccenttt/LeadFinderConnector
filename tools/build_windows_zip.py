@@ -23,8 +23,8 @@ After successful setup, you can move or delete this extracted ZIP folder.
 
 Google Maps keys enable business searches. DeepSeek enables website builds.
 Pexels is optional for images. Keys are supplied separately, not in this ZIP.
-To change keys later, run STOP_LEADFINDER.bat in the installed app folder,
-edit its .env file, then open LeadFinder again.
+To change keys later, open API keys in LeadFinder. Enter replacements and
+click Save keys. Blank fields keep saved keys; no restart is needed.
 
 If setup fails, read the error and run the installer again to retry.
 If opening fails, details are in the installed app's logs folder.
@@ -41,7 +41,7 @@ def build_distribution(output, source=ROOT):
     for name in ('assets', 'static', 'templates', 'scripts'):
         files += [file for file in (source / name).rglob('*')
                   if file.is_file() and '__pycache__' not in file.parts and file.suffix.lower() in extensions]
-    required = ['preview_dashboard.py', 'templates/dashboard.html', 'static/dashboard.js',
+    required = ['preview_dashboard.py', 'api_settings.py', 'templates/dashboard.html', 'static/dashboard.js',
                 'scripts/Install-LeadFinder.ps1', 'scripts/Start-LeadFinder.ps1',
                 'scripts/Stop-LeadFinder.ps1', 'scripts/launch_dashboard.py', 'assets/fonts/Geist.ttf']
     for name in required:

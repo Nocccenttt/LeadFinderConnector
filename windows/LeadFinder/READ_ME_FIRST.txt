@@ -18,8 +18,8 @@ After successful setup, you can move or delete this extracted ZIP folder.
 
 Google Maps keys enable business searches. DeepSeek enables website builds.
 Pexels is optional for images. Keys are supplied separately, not in this ZIP.
-To change keys later, run STOP_LEADFINDER.bat in the installed app folder,
-edit its .env file, then open LeadFinder again.
+To change keys later, open API keys in LeadFinder. Enter replacements and
+click Save keys. Blank fields keep saved keys; no restart is needed.
 
 If setup fails, read the error and run the installer again to retry.
 If opening fails, details are in the installed app's logs folder.

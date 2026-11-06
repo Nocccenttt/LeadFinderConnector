@@ -2,6 +2,7 @@ import csv
 import json
 import hashlib
 import os
+import secrets
 from io import BytesIO
 from pathlib import Path
 from threading import Lock, Thread
@@ -14,8 +15,9 @@ from flask import Flask, jsonify, render_template, request, send_file, send_from
 
 from pipeline_runner import run_pipeline
 from seo_lead_finder_prospecting_batch import run as run_lead_finder
+from api_settings import key_status, save_keys, test_key, safe_job_error
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / '.env', override=True)
 
 app = Flask(__name__)
 APP_ROOT = Path(__file__).resolve().parent
@@ -24,6 +26,7 @@ HANDOFFS = ROOT / "codex_handoffs"
 
 jobs = {}
 jobs_lock = Lock()
+settings_token = secrets.token_urlsafe(32)
 
 
 def preview_info(folder):
@@ -179,10 +182,11 @@ def run_generation(job_id, niche, area, max_results):
         })
         update_job(job_id, status="complete", message="Lead generation complete.", elapsed_seconds=int(time() - started))
     except Exception as error:
+        message = safe_job_error(error, 'google')
         update_job(
             job_id,
-            {"type": "error", "text": f"✕ {error}"},
-            status="error", phase="Error", message=str(error),
+            {"type": "error", "text": f"✕ {message}"},
+            status="error", phase="Error", message=message,
             percent=0, elapsed_seconds=int(time() - started),
         )
 
@@ -210,6 +214,36 @@ def session_state():
 @app.get("/health")
 def health():
     return jsonify({"app": "leadfinder", "root": str(ROOT.resolve())})
+
+
+@app.route('/api-settings', methods=['GET', 'POST'])
+def api_settings():
+    if urlparse(request.host_url).hostname not in ('localhost', '127.0.0.1', '::1'):
+        return jsonify({'error': 'Open API settings from the local LeadFinder app.'}), 403
+    if request.method == 'GET':
+        response = jsonify({'providers': key_status(), 'token': settings_token})
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+    if not secrets.compare_digest(request.headers.get('X-Settings-Token', '').encode('utf-8'), settings_token.encode('utf-8')):
+        return jsonify({'error': 'Reopen API settings and try again.'}), 403
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'Expected API settings as a JSON object.'}), 400
+    try:
+        if data.get('action') == 'test':
+            result = test_key(data.get('provider'), data.get('key'))
+        elif data.get('action') == 'save':
+            result = {'providers': save_keys(ROOT / '.env', data.get('keys')),
+                      'message': 'API keys saved. New searches and builds use them immediately. Retry the failed task.'}
+        else:
+            return jsonify({'error': 'Choose Save or Test.'}), 400
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    except OSError:
+        return jsonify({'error': 'Could not save the keys. Check that the app folder is writable and try again.'}), 500
+    response = jsonify(result)
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 @app.get("/preview-status")
@@ -300,7 +334,7 @@ def run_landing_page(job_id, client_folder, preserve_content=False):
         update_job(job_id, status="complete", message="Landing page ready.",
                    preview_url=preview["preview_url"], download_url=preview["download_url"])
     except Exception as error:
-        update_job(job_id, status="error", message=str(error))
+        update_job(job_id, status="error", message=safe_job_error(error, 'deepseek'))
 
 
 @app.post("/generate-landing-page")

@@ -7,7 +7,7 @@
 
 Files and saved businesses live in `%LOCALAPPDATA%\LeadFinder\app`. The download contains application code, without the developer's saved businesses or generated demos. Closing the browser tab leaves the local server running so you can reopen it quickly.
 
-To change supplied keys later, run `STOP_LEADFINDER.bat` in that installed folder, edit `.env`, then open LeadFinder again. Google Maps is needed to find businesses, DeepSeek to build websites, and Pexels is optional for images. Setup can open the dashboard without keys, but those features require the corresponding keys.
+To change supplied keys later, click **API keys** in the app. Enter a replacement, optionally click **Test**, then click **Save keys**. Blank fields keep their saved values; **Remove saved key** explicitly clears a key. Saved changes apply to new requests immediately without restarting. Google Maps is needed to find businesses, DeepSeek to build websites, and Pexels is optional for images. Setup can open the dashboard without keys, but those features require the corresponding keys.
 
 Setup can be retried after a failed download. Existing `.env` files and saved businesses are preserved. If opening fails, a message identifies the problem; startup logs are in the installed app's `logs` folder. The launcher chooses an available local port and remembers it for later launches.
 

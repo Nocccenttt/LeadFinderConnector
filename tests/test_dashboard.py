@@ -167,6 +167,53 @@ class DashboardBrowserTests(WorkspaceFixture):
     def select(self, folder):
         self.page.locator('.lead-row').filter(has_text=folder.name).click()
 
+    def test_api_settings_can_test_and_replace_keys_without_restart(self):
+        import api_settings
+        from unittest.mock import Mock
+        from playwright.sync_api import expect
+        with patch.dict(os.environ, {'DEEPSEEK_API_KEY': '', 'GOOGLE_MAPS_API_KEY': '', 'PEXELS_API_KEY': ''}):
+            self.page.unroute('**/session')
+            self.page.locator('#refresh-button').click()
+            self.select(self.beta)
+            expect(self.page.locator('#build-button')).to_be_disabled()
+            self.page.get_by_role('button', name='API keys', exact=True).click()
+            expect(self.page.locator('#save-settings')).to_be_enabled()
+            expect(self.page.locator('#key-deepseek')).to_have_attribute('type', 'password')
+            self.page.locator('#key-deepseek').fill('test-replacement-1234')
+            with patch.object(api_settings.requests, 'request', return_value=Mock(status_code=401)):
+                self.page.locator('#test-deepseek').click()
+                expect(self.page.locator('#key-result-deepseek')).to_contain_text('rejected this key')
+            with patch.object(api_settings.requests, 'request', return_value=Mock(status_code=200, json=lambda: {'data': []})):
+                self.page.locator('#test-deepseek').click()
+                expect(self.page.locator('#key-result-deepseek')).to_contain_text('accepted this key')
+            self.assertFalse((self.root / '.env').exists())
+            self.page.locator('#save-settings').click()
+            expect(self.page.locator('#settings-message')).to_contain_text('API keys saved')
+            expect(self.page.locator('#key-deepseek')).to_have_value('')
+            expect(self.page.locator('#key-status-deepseek')).to_contain_text('1234')
+            self.page.get_by_role('button', name='Close API settings').click()
+            expect(self.page.locator('#build-button')).to_be_enabled()
+            self.assertEqual(os.getenv('DEEPSEEK_API_KEY'), 'test-replacement-1234')
+            self.page.get_by_role('button', name='API keys', exact=True).click()
+            expect(self.page.locator('#key-status-deepseek')).to_contain_text('1234')
+            expect(self.page.locator('#key-deepseek')).to_have_value('')
+            self.assertNotIn('test-replacement-1234', self.page.locator('body').inner_text())
+        self.assertEqual(self.errors, [])
+
+    def test_api_settings_mobile_and_cancel_preserve_saved_keys(self):
+        from playwright.sync_api import expect
+        with patch.dict(os.environ, {'DEEPSEEK_API_KEY': 'test-saved-5736'}):
+            for width in (800, 390, 320):
+                self.page.set_viewport_size({'width': width, 'height': 844})
+                self.assertLessEqual(self.page.locator('html').evaluate('(el)=>el.scrollWidth'), width)
+                self.page.get_by_role('button', name='API keys', exact=True).click()
+                expect(self.page.locator('#key-status-deepseek')).to_contain_text('5736')
+                self.page.locator('#key-deepseek').fill('test-unsaved-1234')
+                self.page.keyboard.press('Escape')
+                expect(self.page.locator('#settings-dialog')).to_be_hidden()
+                self.assertEqual(os.getenv('DEEPSEEK_API_KEY'), 'test-saved-5736')
+            self.assertFalse((self.root / '.env').exists())
+
     def test_saved_preview_device_switch_download_filters_and_keyboard(self):
         from playwright.sync_api import expect
         self.select(self.alpha)

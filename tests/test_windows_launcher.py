@@ -155,6 +155,22 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     @unittest.skipUnless(os.getenv('LEADFINDER_TEST_APP'), 'Requires a real installer-prepared workspace')
+    def test_zip_update_restarts_idle_app_and_preserves_keys(self):
+        self.launch()
+        before = (self.app / '.env').read_bytes()
+        env = {**os.environ, 'LEADFINDER_INSTALL_ROOT': str(self.app.parent)}
+        result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+            str(REPO / 'scripts' / 'Install-LeadFinder.ps1'), '-SourceRoot', str(REPO),
+            '-ShortcutFolder', str(Path(self.temp.name) / 'shortcuts'), '-NoLaunch', '-SkipKeyPrompt'],
+            env=env, capture_output=True, text=True, timeout=180)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.app / '.env').read_bytes(), before)
+        self.launch()
+        settings = requests.get(self.address + '/api-settings', timeout=3)
+        self.assertEqual(settings.status_code, 200)
+        self.assertIn('providers', settings.json())
+
+    @unittest.skipUnless(os.getenv('LEADFINDER_TEST_APP'), 'Requires a real installer-prepared workspace')
     def test_installer_second_run_is_offline_and_preserves_data(self):
         with tempfile.TemporaryDirectory(prefix="LeadFinder's download & setup ") as folder:
             installer = Path(folder) / 'DOWNLOAD_LEADFINDER.bat'

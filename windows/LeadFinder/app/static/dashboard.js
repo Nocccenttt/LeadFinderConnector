@@ -9,6 +9,93 @@
   const preview = {key:null, url:null, status:'empty', token:0, controller:null, timeout:null};
   let rebuildKey = null;
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const providers = ['deepseek','google','pexels'];
+  let settingsToken = '', settingsEpoch = 0;
+  function keyMessage(id, message, kind = '') {
+    $(id).textContent = message;
+    $(id).className = `key-test-result ${kind}`;
+  }
+  function renderKeyStatus(items) {
+    for (const provider of providers) {
+      const saved = items[provider];
+      $(`key-status-${provider}`).textContent = saved?.configured ? saved.ending ? `Saved key ending in ${saved.ending}` : 'Saved key configured' : 'No saved key';
+      $(`remove-${provider}`).disabled = !saved?.configured;
+    }
+  }
+  async function openSettings() {
+    if ($('find-dialog').open) $('find-dialog').close();
+    const epoch = ++settingsEpoch;
+    settingsToken = '';
+    $('settings-form').reset();
+    providers.forEach(provider => keyMessage(`key-result-${provider}`,''));
+    keyMessage('settings-message','Loading saved key status…');
+    $('save-settings').disabled = true;
+    if (!$('settings-dialog').open) $('settings-dialog').showModal();
+    try {
+      const data = await api('/api-settings');
+      if (epoch !== settingsEpoch) return;
+      settingsToken = data.token; renderKeyStatus(data.providers);
+      keyMessage('settings-message','Keys stay in this app’s local .env file. Testing does not save a replacement.');
+      $('save-settings').disabled = false;
+    } catch (error) { if (epoch === settingsEpoch) keyMessage('settings-message',error.message,'error'); }
+  }
+  $('settings-button').addEventListener('click',openSettings);
+  $('job-settings-button').addEventListener('click',openSettings);
+  $('search-settings-button').addEventListener('click',openSettings);
+  $('settings-dialog').addEventListener('close',()=>{
+    settingsEpoch += 1; settingsToken = '';
+    $('settings-form').reset();
+    providers.forEach(provider => { $(`key-${provider}`).disabled = false; $(`test-${provider}`).disabled = false; $(`test-${provider}`).textContent = 'Test'; });
+  });
+  for (const provider of providers) {
+    const input = $(`key-${provider}`), remove = $(`remove-${provider}`), button = $(`test-${provider}`);
+    input.addEventListener('input',()=>keyMessage(`key-result-${provider}`,'Replacement not tested.'));
+    remove.addEventListener('change',()=>{
+      input.disabled = remove.checked; button.disabled = remove.checked;
+      keyMessage(`key-result-${provider}`,remove.checked ? 'This key will be removed when you save.' : '');
+    });
+    button.addEventListener('click',async()=>{
+      if (!settingsToken) return;
+      const epoch = settingsEpoch, candidate = input.value.trim();
+      button.disabled = true; button.textContent = 'Testing…';
+      keyMessage(`key-result-${provider}`,'Checking authentication…');
+      try {
+        const result = await api('/api-settings',{method:'POST',headers:{'Content-Type':'application/json','X-Settings-Token':settingsToken},body:JSON.stringify({action:'test',provider,key:candidate})});
+        if (epoch === settingsEpoch && input.value.trim() === candidate && !remove.checked)
+          keyMessage(`key-result-${provider}`,result.message,result.ok ? 'success' : 'error');
+      } catch (error) { if (epoch === settingsEpoch && input.value.trim() === candidate) keyMessage(`key-result-${provider}`,error.message,'error'); }
+      finally { if (epoch === settingsEpoch) { button.textContent = 'Test'; button.disabled = remove.checked; } }
+    });
+  }
+  $('settings-form').addEventListener('submit',async event=>{
+    event.preventDefault();
+    if (!settingsToken) return;
+    const keys = {}, epoch = settingsEpoch;
+    for (const provider of providers) {
+      if ($(`remove-${provider}`).checked) keys[provider] = null;
+      else if ($(`key-${provider}`).value.trim()) keys[provider] = $(`key-${provider}`).value.trim();
+    }
+    if (!Object.keys(keys).length) { keyMessage('settings-message','Enter a replacement key or choose Remove saved key.','error'); return; }
+    const controls = [...$('settings-form').querySelectorAll('input,button[type="submit"],[id^="test-"]')];
+    controls.forEach(control => control.disabled = true);
+    keyMessage('settings-message','Saving keys…');
+    try {
+      const result = await api('/api-settings',{method:'POST',headers:{'Content-Type':'application/json','X-Settings-Token':settingsToken},body:JSON.stringify({action:'save',keys})});
+      if (epoch === settingsEpoch) {
+        $('settings-form').reset();
+        renderKeyStatus(result.providers);
+        providers.forEach(provider => keyMessage(`key-result-${provider}`,''));
+        keyMessage('settings-message',result.message,'success');
+      }
+      await readSession(false); renderSelection();
+    } catch (error) { if (epoch === settingsEpoch) keyMessage('settings-message',error.message,'error'); }
+    finally {
+      if (epoch === settingsEpoch) {
+        controls.forEach(control => control.disabled = false);
+        providers.forEach(provider => { const remove = $(`remove-${provider}`); remove.disabled = $(`key-status-${provider}`).textContent === 'No saved key'; $(`key-${provider}`).disabled = remove.checked; $(`test-${provider}`).disabled = remove.checked; });
+      }
+    }
+  });
   function node(tag, className, text) {
     const element = document.createElement(tag);
     if (className) element.className = className;
@@ -166,6 +253,7 @@
     $('more-actions').hidden = !ready || !lead.can_generate || busy; $('more-actions').open = false;
     $('rebuild-button').disabled = !configured;
     $('job-error').hidden = job?.status !== 'error'; $('job-error').textContent = job?.status === 'error' ? job.message : '';
+    $('job-settings-button').hidden = job?.status !== 'error' || !/api.key|401|authentication/i.test(job.message || '');
     $('open-preview').setAttribute('aria-disabled', String(!ready || busy));
     if (ready) $('open-preview').href = lead.demo_url; else $('open-preview').removeAttribute('href');
     $('retry-preview').disabled = !ready || busy;
@@ -297,6 +385,7 @@
     $('search-progress').hidden = false;
     $('search-phase').textContent = job.status === 'error' ? 'Search needs attention' : job.phase || (job.status === 'complete' ? 'Search complete' : 'Finding businesses…');
     $('search-message').textContent = [job.message,job.current_business].filter(Boolean).join(' · ');
+    $('search-settings-button').hidden = job.status !== 'error' || !/api.key|401|authentication/i.test(job.message || '');
     $('search-progress-bar').value = job.status === 'complete' ? 100 : Math.max(0,Math.min(100,Number(job.percent || 0)));
     $('search-count').textContent = job.total ? `${job.current_index || 0} of ${job.total} businesses checked` : job.status === 'complete' ? 'Your saved businesses are updated.' : 'Preparing the search…';
     $('search-counts').textContent = `${job.high || 0} high · ${job.medium || 0} medium · ${job.low || 0} low`;

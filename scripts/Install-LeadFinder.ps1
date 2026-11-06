@@ -110,11 +110,27 @@ function Set-UpKeys {
     $form.Dispose()
 }
 
+function Stop-IdleWorkspace {
+    $pidFile = Join-Path $AppRoot 'logs\dashboard.pid'
+    if (!(Test-Path -LiteralPath $pidFile)) { return }
+    $serverId = 0
+    if (![int]::TryParse((Get-Content -LiteralPath $pidFile -Raw).Trim(),[ref]$serverId)) { return }
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $serverId"
+    $entrypoint = Join-Path $AppRoot 'scripts\launch_dashboard.py'
+    if (!$process -or $process.CommandLine.IndexOf(('"'+$entrypoint+'"'),[StringComparison]::OrdinalIgnoreCase) -lt 0) { return }
+    $port = (Get-Content -LiteralPath (Join-Path $AppRoot 'logs\dashboard.port') -Raw).Trim()
+    $session = Invoke-RestMethod -UseBasicParsing -Uri "http://127.0.0.1:$port/session" -TimeoutSec 3
+    if (@($session.active_jobs).Count -gt 0) { throw 'A search or build is running. Let it finish before updating LeadFinder.' }
+    Write-Host 'Closing the idle app to install this update...'
+    & (Join-Path $PSScriptRoot 'Stop-LeadFinder.ps1') -AppRoot $AppRoot
+}
+
 try {
     if ($SourceRoot) {
         $SourceRoot = [IO.Path]::GetFullPath($SourceRoot)
         $destination = if ($env:LEADFINDER_INSTALL_ROOT) { $env:LEADFINDER_INSTALL_ROOT } else { Join-Path $env:LOCALAPPDATA 'LeadFinder' }
         $AppRoot = [IO.Path]::GetFullPath((Join-Path $destination 'app'))
+        Stop-IdleWorkspace
         if ($AppRoot -ne $SourceRoot) {
             Write-Host '[1/5] Installing LeadFinder from your extracted ZIP...'
             New-Item -ItemType Directory -Force -Path $AppRoot | Out-Null
@@ -124,6 +140,7 @@ try {
             }
         }
     }
+    if (!$SourceRoot) { Stop-IdleWorkspace }
     if (![Environment]::Is64BitOperatingSystem) { throw 'LeadFinder requires 64-bit Windows 10 or Windows 11.' }
     Write-Host '[2/5] Preparing Python...'
     $python = Find-Python
