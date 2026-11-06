@@ -1,5 +1,6 @@
 @echo off
 setlocal
+set PYTHONUTF8=1
 cd /d "%~dp0"
 
 title LeadFinder
@@ -76,7 +77,7 @@ echo.
 echo Installing LeadFinder dependencies...
 echo.
 
-".venv\Scripts\python.exe" -m pip install Flask openai python-dotenv beautifulsoup4 requests
+".venv\Scripts\python.exe" -m pip install -r requirements.txt
 
 if errorlevel 1 (
     echo.

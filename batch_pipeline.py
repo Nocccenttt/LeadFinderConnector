@@ -9,7 +9,7 @@ from status_manager import (
 )
 
 
-ROOT = Path("codex_handoffs")
+ROOT = Path(__file__).resolve().parent / "codex_handoffs"
 
 PRIORITIES = [
     "HIGH",
@@ -56,7 +56,7 @@ def run_dry_run(clients):
     for client in clients:
 
         print(
-            f"✓ {client.name}"
+            f"[ok] {client.name}"
         )
 
 
@@ -93,7 +93,7 @@ def run_batch(clients, resume=False):
         if resume and is_completed(client):
 
             print(
-                f"⏭ Skipping {client.name}: Already completed"
+                f"[skip] Skipping {client.name}: Already completed"
             )
 
             skipped += 1
@@ -111,7 +111,9 @@ def run_batch(clients, resume=False):
 
         try:
 
-            run_pipeline(client)
+            status = run_pipeline(client)
+            if status != "PASS":
+                raise RuntimeError("Website validation failed; review quality_report.json")
 
 
             save_status(
@@ -161,7 +163,6 @@ def run_batch(clients, resume=False):
     print("FINAL RESULT")
     print("============================")
 
-
     print(
         f"Completed: {processed}"
     )
@@ -181,6 +182,9 @@ def run_batch(clients, resume=False):
 
     print("============================")
 
+
+
+    return failed
 
 
 def main():
@@ -230,10 +234,12 @@ def main():
 
     else:
 
-        run_batch(
+        failed = run_batch(
             clients,
             resume=args.resume
         )
+        if failed:
+            raise SystemExit(1)
 
 
 

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 from website_planning import build_seo_strategy, validate_seo_html
+from color_foundation import contrast
 
 
 FORBIDDEN_CLAIMS = [
@@ -81,7 +82,30 @@ def validate(client_folder):
     report["checks"]["seo"] = seo_report
     report["warnings"].extend(seo_report.get("warnings", []))
 
-    content = html.lower()
+    color_file = client_folder / "COLOR_FOUNDATION.json"
+    if color_file.is_file():
+        foundation = {}
+        checks = []
+        try:
+            foundation = json.loads(color_file.read_text(encoding="utf-8"))
+            checks = foundation.get("contrast", {}).get("checks", [])
+            colors_pass = (foundation.get("status") == "grounded" and bool(checks)
+                           and foundation.get("contrast", {}).get("status") == "PASS"
+                           and all(item.get("pass") is True and item["minimum"] >= 3
+                                   and contrast(item["foreground"], item["background"]) >= item["minimum"]
+                                   for item in checks))
+        except (ValueError, TypeError, KeyError, AttributeError):
+            colors_pass = False
+        report["checks"]["colors"] = {"status": "PASS" if colors_pass else "NEEDS REVIEW",
+                                      "source": foundation.get("source") if isinstance(foundation, dict) else None,
+                                      "pairs_checked": len(checks) if isinstance(checks, list) else 0,
+                                      "scope": "Specified semantic token pairs; rendered element checks are separate."}
+
+    # Inspect visible copy: hex colors such as #172019 are not '#1' claims.
+    visible = BeautifulSoup(html, "html.parser")
+    for node in visible.select("script, style, template, noscript"):
+        node.decompose()
+    content = visible.get_text(" ", strip=True).lower()
     for claim in FORBIDDEN_CLAIMS:
         if claim in content:
             report["warnings"].append(
@@ -95,6 +119,7 @@ def validate(client_folder):
         if not asset_failures
         and report["checks"]["html"]["status"] == "PASS"
         and seo_report.get("status") == "PASS"
+        and report["checks"].get("colors", {}).get("status", "PASS") == "PASS"
         and not any("Potential unsupported claim" in warning for warning in report["warnings"])
         else "NEEDS REVIEW"
     )

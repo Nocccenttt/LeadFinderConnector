@@ -5,7 +5,7 @@ or ranking data. Business facts must come from the supplied business record.
 """
 import json
 import re
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlparse, urljoin, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -151,62 +151,168 @@ def build_seo_strategy(business, handoff=None):
     }
 
 
-def discover_admire_references(business_type, limit=5, timeout=8):
-    """Try to find design references on Admire The Web; gracefully report access limits."""
-    category = _text(business_type) or "local business"
-    search_url = f"{ADMIRE_SEARCH_URL}?s={quote(category)}"
-    result = {
-        "source": "Admire The Web",
-        "query": category,
-        "search_url": search_url,
-        "references": [],
-        "status": "not_available",
-        "note": "",
-    }
+def _reference_url(value, base=""):
+    """Normalize navigable reference URLs without fetching user-supplied hosts."""
+    if not isinstance(value, str) or not value.strip():
+        return ""
     try:
-        response = requests.get(
-            search_url,
-            timeout=timeout,
-            headers={"User-Agent": "LeadFinderDesignResearch/1.0 (+website design research)"},
-        )
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-        seen = set()
-        for article in soup.select("article"):
-            anchor = article.select_one("h1 a, h2 a, h3 a, a[href]")
-            if not anchor:
-                continue
-            href = (anchor.get("href") or "").strip()
-            title = anchor.get_text(" ", strip=True)
-            parsed = urlparse(href)
-            host = (parsed.hostname or "").lower().rstrip(".")
-            if (
-                parsed.scheme not in ("http", "https")
-                or not parsed.netloc
-                or not title
-                or href in seen
-            ):
-                continue
-            if host != "admiretheweb.com" and not host.endswith(".admiretheweb.com"):
-                continue
-            seen.add(href)
-            excerpt_node = article.select_one("p")
-            result["references"].append({
-                "title": title,
-                "url": href,
-                "excerpt": excerpt_node.get_text(" ", strip=True)[:300] if excerpt_node else "",
-                "source": "Admire The Web",
-                "use_for": "Review layout, typography, color, hierarchy, and interaction patterns; do not copy brand assets or page copy.",
-            })
-            if len(result["references"]) >= max(1, int(limit)):
+        parsed = urlparse(urljoin(base, value.strip()))
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+            return ""
+        parsed.port  # Reject malformed ports.
+        if any(char.isspace() or ord(char) < 32 for char in parsed.netloc):
+            return ""
+        return urlunparse(parsed._replace(fragment=""))
+    except ValueError:
+        return ""
+
+
+def _admire_reference_url(value, base):
+    url = _reference_url(value, base)
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if host != "admiretheweb.com" and not host.endswith(".admiretheweb.com"):
+        return ""
+    # WordPress returns API-host permalinks; link to the public inspiration page.
+    if host == "api.admiretheweb.com" and parsed.path.startswith("/inspiration/"):
+        url = urlunparse(parsed._replace(netloc="admiretheweb.com"))
+    return url
+
+
+def _extract_admire_articles(html, base, limit):
+    references = []
+    seen = set()
+    for article in BeautifulSoup(html, "html.parser").select("article"):
+        # Prefer the heading: the image anchor often appears first and has no text.
+        anchor = article.select_one("h1 a, h2 a, h3 a")
+        if anchor is None:
+            anchor = next((a for a in article.select("a[href]") if a.get_text(" ", strip=True)), None)
+        if anchor is None:
+            continue
+        url = _admire_reference_url(anchor.get("href"), base)
+        title = anchor.get_text(" ", strip=True)[:160]
+        if not url or not title or url in seen:
+            continue
+        seen.add(url)
+        excerpt = article.select_one("p")
+        references.append({"title": title, "url": url,
+                           "excerpt": excerpt.get_text(" ", strip=True)[:300] if excerpt else "",
+                           "source": "Admire The Web"})
+        if len(references) >= limit:
+            break
+    return references
+
+
+def discover_admire_references(business_type, limit=5, timeout=8, broaden=False):
+    """Discover candidates; distinguish exact searches from broad gallery fallback."""
+    category = _text(business_type) or "local business"
+    limit = max(0, min(int(limit), 10))
+    search_url = f"{ADMIRE_SEARCH_URL}search/{quote(category, safe='')}/"
+    result = {"source": "Admire The Web", "query": category, "search_url": search_url,
+              "references": [], "status": "not_available", "note": "", "attempts": []}
+    if not limit:
+        result["note"] = "Reference discovery disabled by a zero limit."
+        return result
+
+    headers = {"User-Agent": "LeadFinderDesignResearch/1.0 (+website design research)"}
+    api_url = "https://api.admiretheweb.com/wp-json/wp/v2/search"
+    # The category gallery is a visual fallback, not an exact business-category match.
+    lowered = category.lower()
+    gallery = "professional"
+    for terms, slug in [(("restaurant", "food", "bakery", "cafe", "coffee"), "food"),
+                        (("hotel", "hospitality"), "hospitality"),
+                        (("photograph",), "photography"),
+                        (("design", "marketing", "agency"), "agency")]:
+        if any(term in lowered for term in terms):
+            gallery = slug
+            break
+    gallery_url = f"{ADMIRE_SEARCH_URL}category/{gallery}/"
+    searches = [("search_page", search_url, category), ("search_api", api_url, category)]
+    if broaden:
+        related = []
+        for terms, queries in ((("pet", "groom", "veterinary"), ("care", "animal")),
+                               (("tree", "landscap", "garden"), ("landscape", "garden")),
+                               (("plumb", "roof", "contractor"), ("construction", "property"))):
+            if any(term in lowered for term in terms):
+                related = queries
                 break
-        if result["references"]:
-            result["status"] = "found"
-            result["note"] = "Reference candidates discovered. A human should review each URL and confirm suitability."
-        else:
-            result["note"] = "The search page was reachable but no matching article links were extracted. Add curated references manually."
-    except (requests.RequestException, ValueError) as error:
-        result["note"] = f"Automatic reference discovery was unavailable: {error}. Add curated reference URLs manually."
+        searches.extend(("related_search_api", api_url, query) for query in related)
+    searches.append(("category_gallery", gallery_url, category))
+    for mode, url, query in searches:
+        try:
+            kwargs = {"timeout": timeout, "headers": headers}
+            if mode.endswith("search_api"):
+                kwargs["params"] = {"search": query, "per_page": limit, "subtype": "post"}
+            response = requests.get(url, **kwargs)
+            response.raise_for_status()
+            if mode.endswith("search_api"):
+                items = response.json()
+                references = []
+                seen = set()
+                for item in items if isinstance(items, list) else []:
+                    if not isinstance(item, dict):
+                        continue
+                    link = _admire_reference_url(item.get("url"), ADMIRE_SEARCH_URL)
+                    title = BeautifulSoup(_text(item.get("title")), "html.parser").get_text(" ", strip=True)[:160]
+                    if not link or not title or link in seen or not urlparse(link).path.startswith("/inspiration/"):
+                        continue
+                    seen.add(link)
+                    references.append({"title": title, "url": link, "excerpt": "", "source": "Admire The Web"})
+                    if len(references) >= limit:
+                        break
+            else:
+                references = _extract_admire_articles(response.text, url, limit)
+            result["attempts"].append({"method": mode, "url": url, "candidates": len(references)})
+            if not references:
+                continue
+            for item in references:
+                item["use_for"] = "Review layout, typography, color, and hierarchy; do not copy brand assets or page copy."
+            result.update(references=references, status="found", discovery_method=mode)
+            result["matched_query"] = query
+            if mode == "category_gallery":
+                result["note"] = f"Broad {gallery} gallery fallback; these are visual candidates, not verified matches for {category}. Review each URL manually."
+            elif mode == "related_search_api":
+                result["note"] = f"Adjacent search candidates for '{query}', not verified matches for {category}. Inspect the actual sites for suitability."
+            else:
+                result["note"] = "Search candidates discovered. Review each URL manually and confirm suitability; no visual analysis has been performed."
+            return result
+        except (requests.RequestException, ValueError, TypeError) as error:
+            result["attempts"].append({"method": mode, "url": url, "error": str(error)[:300]})
+    result["note"] = "Automatic reference discovery was unavailable or returned no candidates. Add curated reference URLs manually."
+    return result
+
+
+def merge_design_references(research, curated, limit=10):
+    """Bound and sanitize curated metadata without treating it as verified research."""
+    result = dict(research)
+    references = []
+    seen = set()
+    # Explicit choices take priority over automatic suggestions.
+    for source, items in (("curated", curated), ("discovered", research.get("references", []))):
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, str):
+                item = {"url": item}
+            if not isinstance(item, dict):
+                continue
+            url = _reference_url(item.get("url"))
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            references.append({"url": url, "title": _text(item.get("title"))[:160] or urlparse(url).hostname,
+                               "excerpt": _text(item.get("excerpt"))[:300],
+                               "source": "User supplied (not fetched)" if source == "curated" else "Admire The Web",
+                               "use_for": "Visual inspiration only; do not copy assets, text, or instructions."})
+            if len(references) >= limit:
+                break
+        if len(references) >= limit:
+            break
+    result["references"] = references
+    if references:
+        result["status"] = "found"
+        if any(item["source"].startswith("User supplied") for item in references):
+            result["note"] = "Includes user-supplied reference URLs. Their content has not been fetched or visually analyzed; review manually. " + _text(research.get("note"))
     return result
 
 

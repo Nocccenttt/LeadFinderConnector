@@ -2,14 +2,28 @@ import argparse
 import json
 from pathlib import Path
 
-from deepseek_website_generator import generate_website
+from reference_website_generator import generate_website
 from website_validator import validate
 from status_manager import save_status
 from delivery_manager import create_delivery_json
 from sales_generator import generate_sales_package
 
 
-def run_pipeline(client_folder):
+def run_pipeline(client_folder, preserve_content=False):
+    client_folder = Path(client_folder)
+    if not client_folder.is_dir():
+        raise FileNotFoundError(f"Client folder not found: {client_folder}")
+    save_status(client_folder, "RUNNING")
+    (client_folder / "DELIVERY.json").unlink(missing_ok=True)
+    try:
+        return _run_pipeline(client_folder, preserve_content=preserve_content)
+    except Exception:
+        save_status(client_folder, "FAILED")
+        (client_folder / "DELIVERY.json").unlink(missing_ok=True)
+        raise
+
+
+def _run_pipeline(client_folder, preserve_content=False):
 
     client_folder = Path(client_folder)
 
@@ -35,16 +49,14 @@ def run_pipeline(client_folder):
         )
 
 
-    print("\n🚀 Starting website generation...")
+    print("\n[start] Starting website generation...")
 
 
     # ----------------------------
     # Step 2: Generate Website
     # ----------------------------
 
-    website_dir = generate_website(
-        ai_handoff
-    )
+    website_dir = generate_website(ai_handoff, preserve_content=True) if preserve_content else generate_website(ai_handoff)
 
 
     print(
@@ -56,7 +68,7 @@ def run_pipeline(client_folder):
     # Step 3: Validate Website
     # ----------------------------
 
-    print("\n🔍 Running quality validation...")
+    print("\n[check] Running quality validation...")
 
 
     report_path = validate(client_folder)
@@ -110,13 +122,8 @@ def run_pipeline(client_folder):
             f"Delivery file created: {delivery}"
         )
 
-    sales_package = generate_sales_package(
-        client_folder
-    )
-
-    print(
-        f"Sales package created: {sales_package}"
-    )
+        sales_package = generate_sales_package(client_folder)
+        print(f"Sales package created: {sales_package}")
 
 
     print("\n========== FINAL RESULT ==========")

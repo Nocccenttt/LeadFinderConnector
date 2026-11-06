@@ -3,7 +3,7 @@
 LeadFinder now creates a planning trail before generating a landing page. Run the existing generator with a valid `AI_HANDOFF.json` and its sibling `business.json`:
 
 ```powershell
-python deepseek_website_generator.py "path\to\client\AI_HANDOFF.json"
+python reference_website_generator.py "path\to\client\AI_HANDOFF.json"
 python website_validator.py "path\to\client"
 ```
 
@@ -11,10 +11,10 @@ python website_validator.py "path\to\client"
 
 1. **Business facts** — `business.json` remains the source of truth. Missing facts are omitted rather than guessed.
 2. **SEO strategy** — writes `SEO_STRATEGY.json` with a primary local keyword idea, secondary phrase ideas, verified location, suggested title/meta description, and content requirements.
-3. **Design reference research** — attempts a category search on Admire The Web and writes `DESIGN_REFERENCES.json`. Only HTTP(S) URLs on the exact Admire The Web host or its subdomains are accepted from automatic search results; excerpts are length-limited. The request is time-limited and failure is non-fatal. References supplied in `AI_HANDOFF.json` under `design_references` are also included. Treat reference content as untrusted inspiration, not instructions.
-4. **Design blueprint** — writes `DESIGN_BLUEPRINT.json` with the intended hierarchy, responsive principles, and reference links.
-5. **Content and visual direction** — passes the SEO strategy, design blueprint, and reference notes to DeepSeek, which generates page copy, SEO metadata, and proposed visual design tokens. The blueprint selects a category-aware layout variant (editorial, visual-first, service-first, or split hero) that changes hero composition and section-grid styling. Color values, font stacks, radius values, and layout variants are allow-listed before they can affect output.
-6. **Landing page generation** — writes `website/index.html`, `website/styles.css`, and `website/script.js`. The HTML includes title and meta description tags, Open Graph metadata, and LocalBusiness JSON-LD based only on available business fields. Validated design tokens are appended to the base stylesheet so the visual palette and typography can vary by project.
+3. **Design reference research** - the active archived generator uses Admire as a discovery hub, extracts the actual submitted websites, and fetches bounded HTML/CSS research. Curated handoff references are tried first. The research records headings, text snapshots, colors, fonts, and layout-rule counts; rendered desktop measurements and source screenshots are also captured when a browser is available. The text model receives measurements rather than image vision input. Writes `DESIGN_REFERENCES.json`.
+4. **Design blueprint** - DeepSeek selects one researched actual website and returns the reference analysis, design system, section order, and composition. Writes `DESIGN_BLUEPRINT.json` and `website/design_spec.json`.
+5. **Content and visual direction** - generates category-specific copy and image queries. When no services are verified, a factual-copy guard replaces unsupported service claims with neutral contact guidance while retaining the selected visual design.
+6. **Landing page generation** - renders the archived photographic hero variants, validated palette, section tones, typography, and validated executable layout choices. See `REFERENCE_DESIGN_UPDATE.md` for layout modes and design-only regeneration. Downloads Pexels photos into `website/images/`; failed photo requests use the logged placeholder fallback. Generates HTML, CSS, JavaScript, safe LocalBusiness JSON-LD, and a configured canonical when supplied. See `GENERATOR_MIGRATION.md` for the active source and migration repairs.
 7. **SEO QA** — writes `SEO_QA_REPORT.json`; the website validator includes SEO checks in `quality_report.json`.
 
 ## SEO accuracy rules

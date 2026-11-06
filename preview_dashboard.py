@@ -1,12 +1,14 @@
 import csv
 import json
+from io import BytesIO
 from pathlib import Path
 from threading import Lock, Thread
 from time import time
 from uuid import uuid4
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template_string, request, send_file, send_from_directory
+from flask import Flask, jsonify, render_template_string, request, send_file, send_from_directory, url_for
 
 from pipeline_runner import run_pipeline
 from seo_lead_finder_prospecting_batch import run as run_lead_finder
@@ -135,7 +137,7 @@ input:focus,select:focus{border-color:var(--gold)}
 <div id="demo-status" class="status">Ready.</div>
 <div class="actions">
 <button id="generate-demo" class="primary" type="button">GENERATE LANDING PAGE</button>
-<button id="regenerate-demo" class="secondary" type="button">REGENERATE</button>
+<button id="regenerate-demo" class="secondary" type="button">REGENERATE DESIGN</button>
 <button id="open-preview" class="secondary" type="button">OPEN PREVIEW</button>
 <button id="download-demo" class="secondary" type="button">DOWNLOAD WEBSITE ZIP</button>
 </div>
@@ -289,40 +291,42 @@ function selectLead(lead){
     $("download-demo").disabled=!lead.download_url;
     $("demo-panel").scrollIntoView({behavior:"smooth",block:"start"});
 }
-async function generateDemo(){
+async function generateDemo(preserveContent=false){
     if(!selectedLead)return;
+    const lead=selectedLead;
     const status=$("demo-status");
     $("generate-demo").disabled=true;$("regenerate-demo").disabled=true;
     status.textContent="Starting landing-page pipeline...";
     try{
-        const response=await fetch("/generate-landing-page",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({priority:selectedLead.priority,name:selectedLead.name})});
+        const response=await fetch("/generate-landing-page",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({priority:selectedLead.priority,name:selectedLead.client_id,preserve_content:preserveContent})});
         const data=await response.json();
         if(!response.ok)throw new Error(data.error||"Landing page generation failed.");
-        watchLandingPage(data.job_id);
+        watchLandingPage(data.job_id,lead);
     }catch(error){$("generate-demo").disabled=false;status.textContent=error.message;}
 }
-function watchLandingPage(jobId){
+function watchLandingPage(jobId,lead){
     if(demoTimer)clearInterval(demoTimer);
     demoTimer=setInterval(async()=>{
         try{
             const response=await fetch("/landing-page-status?job_id="+encodeURIComponent(jobId));
             const job=await response.json();
-            $("demo-status").textContent=job.message||"Generating...";
+            if(selectedLead===lead)$("demo-status").textContent=job.message||"Generating...";
             if(job.status==="complete"){
                 clearInterval(demoTimer);
-                selectedLead.demo_ready=true;selectedLead.demo_url=job.preview_url;selectedLead.download_url=job.download_url;
+                lead.demo_ready=true;lead.demo_url=job.preview_url;lead.download_url=job.download_url;
+                if(selectedLead!==lead){await loadLeads();return;}
                 $("generate-demo").disabled=false;$("regenerate-demo").disabled=false;$("open-preview").disabled=false;$("download-demo").disabled=false;
                 $("preview-frame").src=job.preview_url+"?t="+Date.now();
                 $("demo-status").textContent="Landing page ready.";
                 await loadLeads();
             }else if(job.status==="error"){
-                clearInterval(demoTimer);$("generate-demo").disabled=false;$("demo-status").textContent=job.message||"Landing page generation failed.";
+                clearInterval(demoTimer);if(selectedLead===lead){$("generate-demo").disabled=false;$("demo-status").textContent=job.message||"Landing page generation failed.";}
             }
         }catch(error){clearInterval(demoTimer);$("generate-demo").disabled=false;$("demo-status").textContent="Could not read landing-page status.";}
     },700);
 }
-$("generate-demo").addEventListener("click",generateDemo);
-$("regenerate-demo").addEventListener("click",generateDemo);
+$("generate-demo").addEventListener("click",()=>generateDemo(false));
+$("regenerate-demo").addEventListener("click",()=>generateDemo(true));
 $("open-preview").addEventListener("click",()=>{if(selectedLead?.demo_url)window.open(selectedLead.demo_url,"_blank","noopener");});
 $("download-demo").addEventListener("click",()=>{if(selectedLead?.download_url)window.location.href=selectedLead.download_url;});
 $("search").addEventListener("input",renderLeads);
@@ -343,30 +347,37 @@ def discover_leads():
         if not folder.exists():
             continue
         for client_folder in folder.iterdir():
-            if not client_folder.is_dir():
+            if resolve_lead_folder(priority, client_folder.name) is None:
                 continue
             business_file = client_folder / "business.json"
             if not business_file.exists():
                 continue
             try:
                 business = json.loads(business_file.read_text(encoding="utf-8"))
+                if not isinstance(business, dict):
+                    continue
+                score = int(business.get("opportunity_score") or 0)
+                website = str(business.get("website") or "")
+                parsed = urlparse(website)
+                if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                    website = ""
             except Exception:
                 continue
             website_dir = client_folder / "website"
-            relative = client_folder.relative_to(ROOT).as_posix()
             ready = (website_dir / "index.html").exists()
             leads.append({
+                "client_id": client_folder.name,
                 "name": business.get("business_name", client_folder.name),
                 "address": business.get("address", ""),
                 "phone": business.get("phone", ""),
-                "website": business.get("website", ""),
-                "priority": business.get("opportunity", priority),
-                "score": business.get("opportunity_score", 0),
+                "website": website,
+                "priority": priority,
+                "score": score,
                 "reason": business.get("opportunity_reasons", ""),
                 "folder": str(client_folder.relative_to(ROOT)),
                 "demo_ready": ready,
-                "demo_url": "/demo/" + str(business.get("opportunity", priority)).upper() + "/" + client_folder.name if ready else "",
-                "download_url": "/download-demo/" + str(business.get("opportunity", priority)).upper() + "/" + client_folder.name if ready else "",
+                "demo_url": url_for("demo_named", priority=priority, name=client_folder.name) if ready else "",
+                "download_url": url_for("download_demo_named", priority=priority, name=client_folder.name) if ready else "",
             })
     leads.sort(key=lambda lead: (0 if lead["priority"] == "HIGH" else 1 if lead["priority"] == "MEDIUM" else 2, -int(lead["score"] or 0)))
     return leads
@@ -422,6 +433,8 @@ def run_generation(job_id, niche, area, max_results):
             area=area,
             output="leads.csv",
             max_results=max_results,
+            output_dir=ROOT / "outputs",
+            codex_dir=HANDOFFS,
             progress_callback=callback,
         )
         with jobs_lock:
@@ -458,6 +471,8 @@ def home():
 @app.post("/generate")
 def generate():
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Expected a JSON object."}), 400
     niche = str(data.get("niche", "")).strip()
     area = str(data.get("area", "")).strip()
     if not niche or not area:
@@ -469,7 +484,10 @@ def generate():
     max_results = max(1, min(max_results, 100))
     job_id = uuid4().hex
     with jobs_lock:
+        if any(job.get("kind") == "leads" and job.get("status") in ("queued", "running") for job in jobs.values()):
+            return jsonify({"error": "Lead generation is already running."}), 409
         jobs[job_id] = {"status": "queued", "message": "Queued...", "log": [], "percent": 0, "high": 0, "medium": 0, "low": 0}
+        jobs[job_id]["kind"] = "leads"
     Thread(target=run_generation, args=(job_id, niche, area, max_results), daemon=True).start()
     return jsonify({"job_id": job_id})
 
@@ -496,24 +514,37 @@ def leads():
 
 
 def resolve_client(priority, name):
-    priority = str(priority or "").upper()
-    if priority not in ("HIGH", "MEDIUM"):
-        return None
-    folder = HANDOFFS / priority / str(name)
-    if folder.is_dir() and (folder / "AI_HANDOFF.json").exists():
+    folder = resolve_lead_folder(priority, name)
+    if folder and str(priority).upper() in ("HIGH", "MEDIUM") and (folder / "AI_HANDOFF.json").is_file():
         return folder
     return None
 
 
-def run_landing_page(job_id, client_folder):
+def resolve_lead_folder(priority, name):
+    priority = str(priority or "").upper()
+    name = str(name or "")
+    if priority not in ("HIGH", "MEDIUM", "LOW") or not name or name in (".", "..") or any(c in name for c in ("/", "\\", ":")):
+        return None
+    base = (HANDOFFS / priority).resolve()
+    folder = (base / name).resolve()
+    if base.parent == HANDOFFS.resolve() and folder.parent == base and folder.is_dir():
+        return folder
+    return None
+
+
+def run_landing_page(job_id, client_folder, preserve_content=False):
     try:
-        update_job(job_id, status="running", message="DeepSeek is generating the landing page...")
-        run_pipeline(client_folder)
+        update_job(job_id, status="running", message="Researching reference websites and generating the landing page...")
+        status = run_pipeline(client_folder, preserve_content=True) if preserve_content else run_pipeline(client_folder)
+        if status != "PASS":
+            raise RuntimeError("Website validation failed; review quality_report.json.")
         website = client_folder / "website" / "index.html"
         if not website.exists():
             raise RuntimeError("Pipeline finished without creating website/index.html.")
-        relative = client_folder.relative_to(ROOT).as_posix()
-        update_job(job_id, status="complete", message="Landing page ready.", preview_url="/demo/" + relative, download_url="/download-demo/" + relative)
+        with app.test_request_context():
+            preview_url = url_for("demo_named", priority=client_folder.parent.name, name=client_folder.name)
+            download_url = url_for("download_demo_named", priority=client_folder.parent.name, name=client_folder.name)
+        update_job(job_id, status="complete", message="Landing page ready.", preview_url=preview_url, download_url=download_url)
     except Exception as error:
         update_job(job_id, status="error", message=str(error))
 
@@ -521,13 +552,18 @@ def run_landing_page(job_id, client_folder):
 @app.post("/generate-landing-page")
 def generate_landing_page():
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Expected a JSON object."}), 400
     client_folder = resolve_client(data.get("priority"), data.get("name"))
     if not client_folder:
         return jsonify({"error": "Lead handoff not found. Generate the lead handoff first."}), 404
     job_id = uuid4().hex
     with jobs_lock:
+        if any(job.get("client") == str(client_folder) and job.get("status") in ("queued", "running") for job in jobs.values()):
+            return jsonify({"error": "A landing page is already being generated for this lead."}), 409
         jobs[job_id] = {"status": "queued", "message": "Queued landing-page generation..."}
-    Thread(target=run_landing_page, args=(job_id, client_folder), daemon=True).start()
+        jobs[job_id]["client"] = str(client_folder)
+    Thread(target=run_landing_page, args=(job_id, client_folder, data.get("preserve_content") is True), daemon=True).start()
     return jsonify({"job_id": job_id})
 
 
@@ -542,173 +578,62 @@ def landing_page_status():
 
 
 def get_demo_folder(priority, name):
-    """Resolve a demo using the lead priority + exact client folder name."""
-    priority = str(priority or "").upper().strip()
-    name = str(name or "").strip()
-
-    if priority not in ("HIGH", "MEDIUM", "LOW") or not name:
+    folder = resolve_lead_folder(priority, name)
+    if folder is None:
         return None
-
-    folder = HANDOFFS / priority / name
-
-    if not folder.is_dir():
-        return None
-
     website = folder / "website"
-
-    if not (website / "index.html").is_file():
+    if website.resolve().parent != folder or not (website / "index.html").is_file():
         return None
-
+    if (website / "index.html").resolve().parent != website.resolve():
+        return None
     return folder
 
 
-@app.get("/demo/<priority>/<path:name>/<path:asset>")
+@app.get("/demo/codex_handoffs/<priority>/<name>/<path:asset>")
+@app.get("/demo/<priority>/<name>/<path:asset>")
 def demo_asset_named(priority, name, asset):
     folder = get_demo_folder(priority, name)
-
     if not folder:
         return "Landing page not found.", 404
-
     website = folder / "website"
     file_path = (website / asset).resolve()
-    website_root = website.resolve()
-
-    if not file_path.is_file() or website_root not in file_path.parents:
+    if not file_path.is_file() or website.resolve() not in file_path.parents:
         return "Asset not found.", 404
-
-    return send_from_directory(
-        website,
-        file_path.relative_to(website_root).as_posix(),
-    )
+    return send_from_directory(website, file_path.relative_to(website.resolve()).as_posix())
 
 
-@app.get("/demo/<priority>/<path:name>")
+@app.get("/demo/codex_handoffs/<priority>/<name>/")
+@app.get("/demo/<priority>/<name>/")
 def demo_named(priority, name):
     folder = get_demo_folder(priority, name)
-
     if not folder:
         return "Landing page not found.", 404
-
-    return send_from_directory(
-        folder / "website",
-        "index.html",
-    )
+    return send_from_directory(folder / "website", "index.html")
 
 
-# Legacy demo route retained for old dashboard links.
-@app.get("/demo/<path:client_path>/<path:asset>")
-def demo_asset_legacy(client_path, asset):
-    folder = ROOT / client_path
-    website = folder / "website"
-
-    if not website.is_dir():
-        return "Landing page not found.", 404
-
-    file_path = (website / asset).resolve()
-    website_root = website.resolve()
-
-    if not file_path.is_file() or website_root not in file_path.parents:
-        return "Asset not found.", 404
-
-    return send_from_directory(
-        website,
-        file_path.relative_to(website_root).as_posix(),
-    )
-
-
-@app.get("/demo/<path:client_path>")
-def demo_legacy(client_path):
-    folder = ROOT / client_path
-    website = folder / "website"
-
-    if not (website / "index.html").is_file():
-        return "Landing page not found.", 404
-
-    return send_from_directory(website, "index.html")
-
-
-@app.get("/download-demo/<priority>/<path:name>")
+@app.get("/download-demo/codex_handoffs/<priority>/<name>")
+@app.get("/download-demo/<priority>/<name>")
 def download_demo_named(priority, name):
-    """Download the complete landing-page package as a ZIP."""
     import zipfile
 
     folder = get_demo_folder(priority, name)
-
     if not folder:
         return "Landing page not found.", 404
-
     website = folder / "website"
     required = ["index.html", "styles.css", "script.js"]
     missing = [item for item in required if not (website / item).is_file()]
-
     if missing:
-        return (
-            "Landing page package is incomplete. Missing: "
-            + ", ".join(missing)
-        ), 500
+        return "Landing page package is incomplete. Missing: " + ", ".join(missing), 500
 
-    package_dir = ROOT / "outputs" / "landing_pages"
-    package_dir.mkdir(parents=True, exist_ok=True)
-
-    zip_path = package_dir / f"{folder.name}-landing-page.zip"
-
-    with zipfile.ZipFile(
-        zip_path,
-        "w",
-        compression=zipfile.ZIP_DEFLATED,
-    ) as archive:
+    # Each request owns its archive; simultaneous downloads cannot overwrite it.
+    package = BytesIO()
+    with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for file in website.rglob("*"):
-            if file.is_file():
+            if file.is_file() and website.resolve() in file.resolve().parents:
                 archive.write(file, file.relative_to(website))
-
-    return send_file(
-        zip_path,
-        as_attachment=True,
-        download_name=f"{folder.name}-landing-page.zip",
-        mimetype="application/zip",
-    )
-
-
-# Legacy download route retained for old dashboard links.
-@app.get("/download-demo/<path:client_path>")
-def download_demo_legacy(client_path):
-    import zipfile
-
-    folder = ROOT / client_path
-    website = folder / "website"
-
-    if not (website / "index.html").is_file():
-        return "Landing page not found.", 404
-
-    required = ["index.html", "styles.css", "script.js"]
-    missing = [item for item in required if not (website / item).is_file()]
-
-    if missing:
-        return (
-            "Landing page package is incomplete. Missing: "
-            + ", ".join(missing)
-        ), 500
-
-    package_dir = ROOT / "outputs" / "landing_pages"
-    package_dir.mkdir(parents=True, exist_ok=True)
-
-    zip_path = package_dir / f"{folder.name}-landing-page.zip"
-
-    with zipfile.ZipFile(
-        zip_path,
-        "w",
-        compression=zipfile.ZIP_DEFLATED,
-    ) as archive:
-        for file in website.rglob("*"):
-            if file.is_file():
-                archive.write(file, file.relative_to(website))
-
-    return send_file(
-        zip_path,
-        as_attachment=True,
-        download_name=f"{folder.name}-landing-page.zip",
-        mimetype="application/zip",
-    )
+    package.seek(0)
+    return send_file(package, as_attachment=True,
+                     download_name=f"{folder.name}-landing-page.zip", mimetype="application/zip")
 
 
 @app.get("/export")

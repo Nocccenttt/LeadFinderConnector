@@ -28,10 +28,10 @@ def build_ai_handoff(business_json_path):
         "source": "LeadFinder",
         "source_of_truth": "business.json",
         "lead": {
-            "priority": business.get("priority", ""),
+            "priority": business.get("priority") or business.get("opportunity", ""),
             "opportunity_score": business.get("opportunity_score", 0),
             "opportunity": business.get("opportunity", ""),
-            "reason": business.get("reason", ""),
+            "reason": business.get("reason") or business.get("opportunity_reasons", ""),
             "opportunity_reasons": business.get(
                 "opportunity_reasons", []
             ),
@@ -50,7 +50,7 @@ def build_ai_handoff(business_json_path):
             "linkedin": business.get("linkedin", ""),
             "other_socials": business.get("other_socials", ""),
             "email": business.get("email", ""),
-            "email_source_url": business.get("email_source_url", ""),
+            "email_source_url": business.get("email_source_url") or business.get("email_found_on", ""),
         },
         "seo": business.get("seo", {}) if isinstance(business.get("seo"), dict) else {},
         "design_references": business.get("design_references", []) if isinstance(business.get("design_references"), list) else [],

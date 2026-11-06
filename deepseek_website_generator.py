@@ -14,6 +14,7 @@ from website_planning import (
     build_design_blueprint,
     build_seo_strategy,
     discover_admire_references,
+    merge_design_references,
     validate_seo_html,
 )
 
@@ -837,14 +838,26 @@ def generate_copy(business, handoff, seo_strategy=None, design_blueprint=None, r
     content = response.choices[0].message.content or "{}"
 
     try:
-        return json.loads(content)
+        result = json.loads(content)
     except json.JSONDecodeError as error:
         raise RuntimeError(
             f"DeepSeek returned invalid JSON: {error}"
         )
+    if not isinstance(result, dict):
+        raise RuntimeError("DeepSeek returned JSON that is not an object.")
+    return result
 
 
 def build_html(business, copy, seo_strategy=None, design_blueprint=None):
+    if not isinstance(copy, dict):
+        raise ValueError("Website copy must be a JSON object.")
+    copy = dict(copy)
+    for key in ("services", "benefits", "process", "faq"):
+        if not isinstance(copy.get(key), list):
+            copy[key] = []
+    for key in ("headline", "subheadline", "intro", "about_title", "about", "services_intro", "local_intro", "cta_title", "cta_text"):
+        if key in copy and not isinstance(copy[key], str):
+            del copy[key]
     name = get_business_name(business, {})
     business_type = get_business_type(business)
     business_type_title = business_type.title()
@@ -1551,12 +1564,7 @@ def generate_website(handoff_path):
     category = seo_strategy.get("business_type", "local business")
     reference_research = discover_admire_references(category)
     curated_references = handoff.get("design_references", []) if isinstance(handoff, dict) else []
-    if isinstance(curated_references, list):
-        seen_reference_urls = {item.get("url") for item in reference_research.get("references", []) if isinstance(item, dict)}
-        for item in curated_references:
-            if isinstance(item, dict) and item.get("url") and item.get("url") not in seen_reference_urls:
-                reference_research.setdefault("references", []).append(item)
-                seen_reference_urls.add(item.get("url"))
+    reference_research = merge_design_references(reference_research, curated_references)
     design_blueprint = build_design_blueprint(business, seo_strategy, reference_research)
     project_dir = handoff_path.parent
     (project_dir / "SEO_STRATEGY.json").write_text(json.dumps(seo_strategy, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -1651,6 +1659,7 @@ Do not add unsupported business claims.
 
 
 if __name__ == "__main__":
+    from reference_website_generator import generate_website as generate_reference_website
 
     parser = argparse.ArgumentParser(
         description=(
@@ -1666,7 +1675,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    result = generate_website(
+    result = generate_reference_website(
         args.ai_handoff
     )
 
