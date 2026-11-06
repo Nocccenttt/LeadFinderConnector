@@ -207,6 +207,11 @@ def session_state():
                     "active_jobs":active})
 
 
+@app.get("/health")
+def health():
+    return jsonify({"app": "leadfinder", "root": str(ROOT.resolve())})
+
+
 @app.get("/preview-status")
 def preview_status():
     folder = resolve_lead_folder(request.args.get("priority"), request.args.get("name"))
@@ -400,13 +405,14 @@ def export():
 
 
 if __name__ == "__main__":
+    port = int(os.getenv("LEADFINDER_PORT", "3000"))
     print()
     print("==============================")
     print("       LEADFINDER")
     print("==============================")
     print()
-    print("Open: http://127.0.0.1:3000")
+    print(f"Open: http://127.0.0.1:{port}")
     print()
     print("Dashboard file:", Path(__file__).resolve())
     print("Workspace UI: modern minimal")
-    app.run(host="127.0.0.1", port=3000, debug=False)
+    app.run(host="127.0.0.1", port=port, debug=False)

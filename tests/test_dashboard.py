@@ -50,6 +50,9 @@ class WorkspaceFixture(unittest.TestCase):
 
 
 class DashboardContractTests(WorkspaceFixture):
+    def test_launcher_can_identify_its_own_workspace(self):
+        self.assertEqual(self.client.get('/health').get_json(), {'app': 'leadfinder', 'root': str(self.root.resolve())})
+
     def info(self, folder):
         return self.client.get('/preview-status', query_string={'priority': folder.parent.name, 'name': folder.name})
 
