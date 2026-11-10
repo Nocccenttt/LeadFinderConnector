@@ -99,6 +99,39 @@ class DashboardContractTests(WorkspaceFixture):
             with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
                 self.assertEqual(set(archive.namelist()), {'index.html', 'styles.css', 'script.js'})
 
+    def test_lead_workflow_persists_without_changing_business_source_data(self):
+        token = dashboard.settings_token
+        original = json.loads((self.beta / 'business.json').read_text(encoding='utf-8'))
+        response = self.client.post('/lead-workflow', json={
+            'priority': 'MEDIUM',
+            'name': self.beta.name,
+            'status': 'FOLLOW_UP',
+            'follow_up_date': '2026-11-18',
+            'notes': 'Called owner. Send redesigned homepage and follow up next week.',
+        }, headers={'X-Workspace-Token': token})
+        self.assertEqual(response.status_code, 200)
+        workflow = response.get_json()['workflow']
+        self.assertEqual(workflow['status'], 'FOLLOW_UP')
+        self.assertEqual(workflow['follow_up_date'], '2026-11-18')
+        self.assertIn('Called owner', workflow['notes'])
+        self.assertEqual(json.loads((self.beta / 'business.json').read_text(encoding='utf-8')), original)
+        self.assertEqual(json.loads((self.beta / 'lead_workflow.json').read_text(encoding='utf-8')), workflow)
+        lead = next(item for item in self.client.get('/leads').get_json()['leads'] if item['name'] == self.beta.name)
+        self.assertEqual(lead['workflow'], workflow)
+
+        invalid_status = self.client.post('/lead-workflow', json={
+            'priority': 'MEDIUM', 'name': self.beta.name, 'status': 'WON',
+        }, headers={'X-Workspace-Token': token})
+        self.assertEqual(invalid_status.status_code, 400)
+        invalid_date = self.client.post('/lead-workflow', json={
+            'priority': 'MEDIUM', 'name': self.beta.name, 'status': 'CONTACTED', 'follow_up_date': 'tomorrow',
+        }, headers={'X-Workspace-Token': token})
+        self.assertEqual(invalid_date.status_code, 400)
+        too_long = self.client.post('/lead-workflow', json={
+            'priority': 'MEDIUM', 'name': self.beta.name, 'status': 'NEW', 'notes': 'x' * 5001,
+        }, headers={'X-Workspace-Token': token})
+        self.assertEqual(too_long.status_code, 400)
+
     def test_incomplete_build_does_not_report_success(self):
         with patch.object(dashboard, 'run_pipeline', return_value='PASS'):
             dashboard.run_landing_page('incomplete', self.beta)
