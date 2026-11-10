@@ -1543,3 +1543,26 @@ select {
   background:#c6a15b44;
   color:#fff8e7;
 }
+
+
+/* Wolf Forge product branding */
+.brand-copy {
+  display:flex;
+  align-items:center;
+}
+.brand-company {
+  color:#f7f1e5;
+  font-weight:650;
+  letter-spacing:-.025em;
+}
+.brand-context {
+  color:#d2b46f;
+  font-weight:550;
+}
+.brand-mark {
+  font-size:11px;
+  letter-spacing:.08em;
+  background:linear-gradient(145deg,#111f31,#0b1523);
+  color:#d7b96f;
+  box-shadow:inset 0 0 0 1px #ffffff08,0 6px 18px #00000024;
+}
