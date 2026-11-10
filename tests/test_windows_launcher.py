@@ -40,9 +40,13 @@ exit ([int]$env:LEADFINDER_TEST_EXIT)
                         env=env, capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL)
                     self.assertEqual(result.returncode, expected_code, result.stdout + result.stderr)
                     recorded = json.loads(result_file.read_text(encoding='utf-8-sig'))
-                    self.assertEqual(Path(recorded['root']), app)
-                    self.assertEqual(recorded['source'], str(app) if packaged else '')
-                    self.assertEqual(recorded['config'], str(root / '.env') if packaged else '')
+                    self.assertEqual(Path(recorded['root']).resolve(), app.resolve())
+                    if packaged:
+                        self.assertEqual(Path(recorded['source']).resolve(), app.resolve())
+                        self.assertEqual(Path(recorded['config']).resolve(), (root / '.env').resolve())
+                    else:
+                        self.assertEqual(recorded['source'], '')
+                        self.assertEqual(recorded['config'], '')
 
 
 @unittest.skipUnless(os.name == 'nt', 'Requires Windows PowerShell')
@@ -155,7 +159,8 @@ while True:
                 result = subprocess.run(self.command(app=app) + ['-StartupTimeoutSeconds', '2'],
                     capture_output=True, text=True, timeout=20)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn('did not become ready within 2 seconds', result.stdout + result.stderr)
+                message = ' '.join((result.stdout + result.stderr).split())
+                self.assertIn('did not become ready within 2 seconds', message)
                 self.assertIsNone(other.poll(), 'Startup cleanup must not stop another Python process.')
                 child_pid = int((app / 'started.pid').read_text())
                 check = subprocess.run(['powershell.exe', '-NoProfile', '-Command',

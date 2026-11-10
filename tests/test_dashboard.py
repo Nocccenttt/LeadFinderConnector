@@ -562,6 +562,9 @@ class DashboardBrowserTests(WorkspaceFixture):
     def test_generated_preview_isolated_from_app_and_still_runs_local_assets(self):
         from playwright.sync_api import expect
         import shutil
+        # Security checks must cross the real HTTP/CORS boundary, not the
+        # session response stub used by unrelated dashboard interaction tests.
+        self.page.unroute('**/session')
         website = self.alpha / 'website'
         (website / 'fonts').mkdir()
         shutil.copyfile(dashboard.APP_ROOT / 'assets/fonts/Geist.ttf', website / 'fonts/Geist.ttf')
