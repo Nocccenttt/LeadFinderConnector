@@ -2381,3 +2381,19 @@ textarea {
     grid-column:1 / -1;
   }
 }
+
+
+/* Keep lead metadata readable when follow-up badges are present */
+.lead-row-bottom {
+  flex-wrap:wrap;
+  justify-content:flex-start;
+}
+.row-website-status {
+  margin-left:auto;
+}
+@media(max-width:420px) {
+  .row-website-status {
+    width:100%;
+    margin-left:0;
+  }
+}
