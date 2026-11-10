@@ -4,7 +4,7 @@
   const running = job => job && ['starting', 'queued', 'running'].includes(job.status);
   const keyOf = lead => `${lead.priority}::${encodeURIComponent(lead.client_id)}`;
   const sortModes = ['priority','score-desc','score-asc','name-asc','name-desc'];
-  const state = {leads:[], selected:null, priority:'ALL', website:'ALL', sort:'priority', jobs:new Map(), search:null,
+  const state = {leads:[], selected:null, priority:'ALL', website:'ALL', workflow:'ALL', sort:'priority', jobs:new Map(), search:null,
     workspace:'', workspaceToken:'', capabilities:{}, device:innerWidth < 800 ? 'mobile' : 'desktop', connected:false, deleting:false, loadingLeads:false};
   let leadLoadEpoch = 0, pendingDelete = null;
   const watching = new Set();
@@ -260,7 +260,9 @@
       const searchable = [lead.name, lead.address, lead.category, lead.reason].join(' ').toLocaleLowerCase();
       const job = state.jobs.get(keyOf(lead));
       const status = running(job) ? 'working' : job?.status === 'error' ? 'failed' : lead.preview_state || (lead.demo_ready ? 'ready' : 'missing');
+      const workflowStatus = workflowOf(lead).status;
       return (!query || searchable.includes(query)) && (state.priority === 'ALL' || lead.priority === state.priority) &&
+        (state.workflow === 'ALL' || state.workflow === workflowStatus) &&
         (state.website === 'ALL' || state.website === status || (state.website === 'missing' && status === 'incomplete'));
     }).sort(compareLeads);
   }
@@ -289,7 +291,7 @@
       action.type = 'button';
       action.addEventListener('click', () => {
         if (!state.leads.length) return openSearch();
-        $('lead-search').value = ''; $('website-filter').value = 'ALL'; state.website = 'ALL'; state.priority = 'ALL'; renderList();
+        $('lead-search').value = ''; $('website-filter').value = 'ALL'; $('workflow-filter').value = 'ALL'; state.website = 'ALL'; state.workflow = 'ALL'; state.priority = 'ALL'; renderList();
       });
       empty.append(action); list.append(empty); return;
     }
@@ -676,6 +678,7 @@
   });
   document.querySelectorAll('[data-priority]').forEach(button => button.addEventListener('click',()=>{state.priority = button.dataset.priority;renderList();}));
   $('lead-search').addEventListener('input',renderList);
+  $('workflow-filter').addEventListener('change',()=>{state.workflow = $('workflow-filter').value;renderList();});
   $('website-filter').addEventListener('change',()=>{state.website = $('website-filter').value;renderList();});
   $('lead-sort').addEventListener('change',()=>{state.sort = sortModes.includes($('lead-sort').value) ? $('lead-sort').value : 'priority';savePreferences();renderList();});
   $('delete-business-button').addEventListener('click',()=>openDelete(false));
