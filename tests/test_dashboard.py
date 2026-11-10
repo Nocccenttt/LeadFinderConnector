@@ -296,6 +296,38 @@ class DashboardBrowserTests(WorkspaceFixture):
         expect(self.page.locator('#build-button')).to_be_disabled()
         self.assertEqual(self.errors, [])
 
+    def test_followup_summary_filters_badges_and_urgency_sorting(self):
+        from datetime import date, timedelta
+        from playwright.sync_api import expect
+
+        today = date.today()
+        workflows = {
+            self.beta: {'status': 'FOLLOW_UP', 'follow_up_date': (today - timedelta(days=3)).isoformat(), 'notes': 'Overdue'},
+            self.gamma: {'status': 'CONTACTED', 'follow_up_date': today.isoformat(), 'notes': 'Today'},
+            self.low: {'status': 'INTERESTED', 'follow_up_date': (today + timedelta(days=2)).isoformat(), 'notes': 'Upcoming'},
+            self.alpha: {'status': 'CLOSED', 'follow_up_date': (today - timedelta(days=10)).isoformat(), 'notes': 'Closed'},
+        }
+        for folder, workflow in workflows.items():
+            (folder / 'lead_workflow.json').write_text(json.dumps(workflow), encoding='utf-8')
+
+        self.page.locator('#refresh-button').click()
+        expect(self.page.locator('#followup-needs-count')).to_have_text('3')
+        expect(self.page.locator('#followup-overdue-count')).to_have_text('1')
+        expect(self.page.locator('#followup-today-count')).to_have_text('1')
+        expect(self.page.locator('#followup-upcoming-count')).to_have_text('1')
+
+        self.page.locator('[data-followup-filter="NEEDS"]').click()
+        expect(self.page.locator('.lead-row')).to_have_count(3)
+        expect(self.page.locator('.lead-row-name')).to_have_text([self.beta.name, self.gamma.name, self.low.name])
+        expect(self.page.locator('.followup-overdue')).to_contain_text('3 days overdue')
+        expect(self.page.locator('.followup-today')).to_have_text('Due today')
+        expect(self.page.locator('.followup-upcoming')).to_contain_text('In 2 days')
+
+        self.page.locator('[data-followup-filter="TODAY"]').click()
+        expect(self.page.locator('.lead-row')).to_have_count(1)
+        expect(self.page.locator('.lead-row-name')).to_have_text([self.gamma.name])
+        self.assertEqual(self.errors, [])
+
     def test_two_builds_survive_switching_and_reload_without_replacing_selection(self):
         from playwright.sync_api import expect
         self.select(self.beta)
