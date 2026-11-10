@@ -111,6 +111,25 @@
     return element;
   }
   function selectedLead() { return state.leads.find(lead => keyOf(lead) === state.selected); }
+  const workflowLabels = {NEW:'New',CONTACTED:'Contacted',FOLLOW_UP:'Follow-up',INTERESTED:'Interested',CLOSED:'Closed'};
+  function workflowOf(lead) {
+    const saved = lead?.workflow && typeof lead.workflow === 'object' ? lead.workflow : {};
+    const status = workflowLabels[saved.status] ? saved.status : 'NEW';
+    return {status,notes:String(saved.notes || ''),follow_up_date:String(saved.follow_up_date || '')};
+  }
+  function renderWorkflow(lead) {
+    const workflow = workflowOf(lead);
+    $('lead-workflow-status').value = workflow.status;
+    $('lead-follow-up-date').value = workflow.follow_up_date;
+    $('lead-notes').value = workflow.notes;
+    $('lead-notes-count').textContent = workflow.notes.length + ' / 5000';
+    $('workflow-save-state').textContent = '';
+    $('save-lead-workflow').disabled = !state.connected || !state.workspaceToken;
+  }
+  function workflowChip(lead) {
+    const workflow = workflowOf(lead);
+    return node('span','workflow-chip workflow-' + workflow.status.toLowerCase(),workflowLabels[workflow.status]);
+  }
   function readStorage(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } }
   function saveStorage(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Storage is optional in private/restricted browsers. */ } }
   function savePreferences() {
@@ -285,7 +304,7 @@
       row.append(top,node('span','lead-location',lead.address || 'No address recorded'));
       const bottom = node('span','lead-row-bottom');
       const label = busy ? 'Building website…' : job?.status === 'error' || lead.preview_state === 'failed' ? 'Needs attention' : lead.demo_ready ? 'Website ready' : 'Not built yet';
-      bottom.append(node('span',`priority-label ${lead.priority.toLowerCase()}`,lead.priority[0] + lead.priority.slice(1).toLowerCase()),
+      bottom.append(node('span',`priority-label ${lead.priority.toLowerCase()}`,lead.priority[0] + lead.priority.slice(1).toLowerCase()), workflowChip(lead),
         node('span',`row-website-status ${busy ? 'working' : lead.demo_ready ? 'ready' : ''}`,label));
       row.append(bottom);
       row.addEventListener('click', () => selectLead(key, true));
@@ -413,6 +432,7 @@
     $('open-preview').setAttribute('aria-disabled', String(!ready || busy));
     if (ready) $('open-preview').href = lead.demo_url; else $('open-preview').removeAttribute('href');
     $('retry-preview').disabled = !ready || busy;
+    renderWorkflow(lead);
     renderQuality(lead, busy);
     document.querySelectorAll('[data-device]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.device === state.device)));
     if (forcePreview || preview.key !== state.selected || (ready && preview.url !== lead.demo_url && preview.status !== 'loading')) loadPreview(lead);
@@ -489,6 +509,24 @@
     stage.classList.toggle('mobile',state.device === 'mobile');
     $('preview-size').textContent = `${width}px · Fit ${Math.round(scale * 100)}%`;
   }
+  async function saveLeadWorkflow() {
+    const lead = selectedLead();
+    if (!lead || !state.connected || !state.workspaceToken) return;
+    const button = $('save-lead-workflow');
+    const payload = {priority:lead.priority,name:lead.client_id,status:$('lead-workflow-status').value,follow_up_date:$('lead-follow-up-date').value,notes:$('lead-notes').value};
+    button.disabled = true; button.textContent = 'Saving…'; $('workflow-save-state').textContent = 'Saving…';
+    try {
+      const result = await api('/lead-workflow',{method:'POST',headers:{'Content-Type':'application/json','X-Workspace-Token':state.workspaceToken},body:JSON.stringify(payload)});
+      lead.workflow = result.workflow; $('workflow-save-state').textContent = 'Saved'; renderList();
+      setTimeout(()=>{ if ($('workflow-save-state').textContent === 'Saved') $('workflow-save-state').textContent = ''; },1800);
+    } catch (error) {
+      $('workflow-save-state').textContent = error.message;
+      if (error.status === 403 || error.status === 404) await loadLeads();
+    } finally {
+      button.textContent = 'Save follow-up'; button.disabled = !state.connected || !state.workspaceToken;
+    }
+  }
+
   function openSearch() {
     if (state.deleting) return;
     if (searchPending || running(state.search)) { $('search-progress').scrollIntoView({block:'start'}); return; }
@@ -604,6 +642,10 @@
     if (running(state.search)) { renderSearch(state.search); watchSearch(state.search); }
     return session;
   }
+  $('lead-notes').addEventListener('input',()=>{$('lead-notes-count').textContent = $('lead-notes').value.length + ' / 5000'; $('workflow-save-state').textContent = '';});
+  $('lead-workflow-status').addEventListener('change',()=>{$('workflow-save-state').textContent = '';});
+  $('lead-follow-up-date').addEventListener('change',()=>{$('workflow-save-state').textContent = '';});
+  $('save-lead-workflow').addEventListener('click',saveLeadWorkflow);
   $('find-button').addEventListener('click',openSearch);
   $('empty-find-button').addEventListener('click',openSearch);
   $('search-again').addEventListener('click',openSearch);
