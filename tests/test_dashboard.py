@@ -517,21 +517,31 @@ class DashboardBrowserTests(WorkspaceFixture):
         expect(self.page.locator('#selected-workspace')).to_be_hidden()
         self.assertEqual(self.errors, [])
 
-    def test_clear_list_includes_filtered_businesses_and_stays_empty_after_reload(self):
+    def test_clear_list_can_remove_priority_scope_or_all(self):
         from playwright.sync_api import expect
         self.enable_list_management()
-        self.page.locator('[data-priority="HIGH"]').click()
-        expect(self.page.locator('.lead-row')).to_have_count(2)
+
         self.page.locator('#clear-list-button').click()
-        expect(self.page.locator('#delete-description')).to_contain_text('all 4 saved businesses')
-        expect(self.page.locator('#delete-description')).to_contain_text('hidden by your current search or filters')
+        expect(self.page.locator('#clear-menu-panel')).to_be_visible()
+        self.page.locator('[data-clear-priority="LOW"]').click()
+        expect(self.page.locator('#delete-description')).to_contain_text('1 low-priority business')
+        expect(self.page.locator('#delete-description')).to_contain_text('outside this group will be kept')
+        self.page.locator('#confirm-delete').click()
+        expect(self.page.locator('.lead-row')).to_have_count(3)
+        self.assertFalse(self.low.exists())
+        self.assertTrue(self.alpha.exists())
+        self.assertTrue(self.beta.exists())
+        self.assertTrue(self.gamma.exists())
+
+        self.page.locator('#clear-list-button').click()
+        self.page.locator('[data-clear-priority="ALL"]').click()
+        expect(self.page.locator('#delete-description')).to_contain_text('3 businesses')
         self.page.locator('#confirm-delete').click()
         expect(self.page.locator('.lead-row')).to_have_count(0)
         expect(self.page.locator('#business-list')).to_contain_text('Your next client starts here.')
         expect(self.page.locator('#saved-count')).to_have_text('0 saved · 0 websites ready')
         expect(self.page.locator('#clear-list-button')).to_be_disabled()
         self.page.reload()
-        expect(self.page.locator('#business-list')).to_contain_text('Your next client starts here.')
         expect(self.page.locator('.lead-row')).to_have_count(0)
         self.assertEqual(len(list((self.root / 'outputs/deleted_leads').rglob('business.json'))), 4)
         self.assertEqual(self.errors, [])
@@ -543,7 +553,11 @@ class DashboardBrowserTests(WorkspaceFixture):
         self.page.locator('#build-button').click()
         expect(self.page.locator('#website-state')).to_have_text('Building website')
         expect(self.page.locator('#delete-business-button')).to_be_disabled()
-        expect(self.page.locator('#clear-list-button')).to_be_disabled()
+        expect(self.page.locator('#clear-list-button')).to_be_enabled()
+        self.page.locator('#clear-list-button').click()
+        expect(self.page.locator('[data-clear-priority="MEDIUM"]')).to_be_disabled()
+        expect(self.page.locator('[data-clear-priority="LOW"]')).to_be_enabled()
+        self.page.keyboard.press('Escape')
         self.select(self.alpha)
         expect(self.page.locator('#delete-business-button')).to_be_enabled()
         with dashboard.jobs_lock:
@@ -554,7 +568,7 @@ class DashboardBrowserTests(WorkspaceFixture):
         with dashboard.jobs_lock:
             dashboard.jobs['external-search']['status'] = 'complete'
         expect(self.page.locator('#delete-business-button')).to_be_enabled()
-        expect(self.page.locator('#clear-list-button')).to_be_disabled()
+        expect(self.page.locator('#clear-list-button')).to_be_enabled()
         self.statuses['1'] = {'status': 'error', 'message': 'Test build ended.'}
         expect(self.page.locator('#clear-list-button')).to_be_enabled()
         self.assertEqual(self.errors, [])
