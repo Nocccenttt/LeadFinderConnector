@@ -1,14 +1,7 @@
-# ==========================
 # Secrets
-# ==========================
-
 .env
 
-
-# ==========================
 # Python
-# ==========================
-
 __pycache__/
 *.pyc
 *.pyo
@@ -17,46 +10,13 @@ __pycache__/
 .installed.json
 .playwright-cli/
 
-
-# ==========================
-# Logs
-# ==========================
-
+# Runtime logs and generated output
 logs/
-
-
-# ==========================
-# LeadFinder Generated Data
-# ==========================
-
 outputs/
-
-
-# ==========================
-# Generated Websites
-# ==========================
-
-codex_handoffs/**/website/
-
-
-# ==========================
-# Generated AI Reports
-# ==========================
-
-codex_handoffs/**/quality_report.json
-
-
-# ==========================
-# Temporary Testing
-# ==========================
-
-codex_handoffs/TEST/
-
-# Batch execution logs
 batch_runs/
 
-# Client runtime status files
-codex_handoffs/**/STATUS.json
-
-# Generated client handoffs
+# Generated client workspaces and handoffs
 codex_handoffs/
+
+# Deprecated generated Windows distribution mirror
+windows/
