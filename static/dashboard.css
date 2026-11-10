@@ -2203,3 +2203,36 @@ select {
     grid-template-columns:1fr;
   }
 }
+
+
+.list-filter-group {
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:6px;
+  min-width:0;
+}
+.list-filter-group select {
+  max-width:132px;
+}
+textarea {
+  font:inherit;
+}
+@media(max-width:1180px) {
+  .list-toolbar {
+    align-items:flex-start;
+    flex-direction:column;
+  }
+  .list-filter-group {
+    width:100%;
+    justify-content:stretch;
+  }
+  .list-filter-group label {
+    flex:1;
+    min-width:0;
+  }
+  .list-filter-group select {
+    width:100%;
+    max-width:none;
+  }
+}
