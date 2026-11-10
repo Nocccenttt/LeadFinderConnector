@@ -22,6 +22,13 @@
   <div class="page-heading"><div><p class="eyebrow">WOLF FORGE · LEAD INTELLIGENCE</p><h1>Businesses, with a next step.</h1><p class="page-description">Find a business. Build its website. See the result here.</p></div><span class="saved-count" id="saved-count">Loading saved businesses…</span></div>
   <div id="workspace-error" class="notice error" role="alert" hidden><span id="workspace-error-text"></span><button class="button compact" id="retry-workspace">Retry</button></div>
   <div id="workspace-status" class="notice success" role="status" hidden><span id="workspace-status-text"></span><button class="button compact" id="dismiss-workspace-status" aria-label="Dismiss list update">Dismiss</button></div>
+  <section class="followup-summary" aria-label="Follow-up summary">
+    <button class="followup-summary-card active" type="button" data-followup-filter="ALL" aria-pressed="true"><span class="followup-summary-label">All leads</span><strong id="followup-all-count">0</strong></button>
+    <button class="followup-summary-card" type="button" data-followup-filter="NEEDS" aria-pressed="false"><span class="followup-summary-label">Needs follow-up</span><strong id="followup-needs-count">0</strong></button>
+    <button class="followup-summary-card overdue" type="button" data-followup-filter="OVERDUE" aria-pressed="false"><span class="followup-summary-label">Overdue</span><strong id="followup-overdue-count">0</strong></button>
+    <button class="followup-summary-card today" type="button" data-followup-filter="TODAY" aria-pressed="false"><span class="followup-summary-label">Due today</span><strong id="followup-today-count">0</strong></button>
+    <button class="followup-summary-card upcoming" type="button" data-followup-filter="UPCOMING" aria-pressed="false"><span class="followup-summary-label">Upcoming</span><strong id="followup-upcoming-count">0</strong></button>
+  </section>
   <section class="search-progress" id="search-progress" aria-label="Business search progress" hidden>
     <div class="search-progress-top"><div><span class="eyebrow">FINDING BUSINESSES</span><h2 id="search-phase">Preparing your search…</h2><p id="search-message" role="status" aria-live="polite"></p></div><span id="search-elapsed" class="elapsed" aria-hidden="true">0s</span></div>
     <progress id="search-progress-bar" value="0" max="100" aria-label="Search progress"></progress>
