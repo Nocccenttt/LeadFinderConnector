@@ -4,7 +4,7 @@
   const running = job => job && ['starting', 'queued', 'running'].includes(job.status);
   const keyOf = lead => `${lead.priority}::${encodeURIComponent(lead.client_id)}`;
   const sortModes = ['priority','score-desc','score-asc','name-asc','name-desc'];
-  const state = {leads:[], selected:null, priority:'ALL', website:'ALL', workflow:'ALL', sort:'priority', jobs:new Map(), search:null,
+  const state = {leads:[], selected:null, priority:'ALL', website:'ALL', workflow:'ALL', followup:'ALL', sort:'priority', jobs:new Map(), search:null,
     workspace:'', workspaceToken:'', capabilities:{}, device:innerWidth < 800 ? 'mobile' : 'desktop', connected:false, deleting:false, loadingLeads:false};
   let leadLoadEpoch = 0, pendingDelete = null;
   const watching = new Set();
@@ -130,6 +130,56 @@
     const workflow = workflowOf(lead);
     return node('span','workflow-chip workflow-' + workflow.status.toLowerCase(),workflowLabels[workflow.status]);
   }
+  function localToday() {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+  function parseLocalDate(value) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+    if (!match) return null;
+    const result = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    return Number.isNaN(result.getTime()) ? null : result;
+  }
+  function followupInfo(lead) {
+    const workflow = workflowOf(lead);
+    if (!workflow.follow_up_date || workflow.status === 'CLOSED') return {kind:'NONE',days:null,label:'',date:null};
+    const due = parseLocalDate(workflow.follow_up_date);
+    if (!due) return {kind:'NONE',days:null,label:'',date:null};
+    const days = Math.round((due - localToday()) / 86400000);
+    if (days < 0) return {kind:'OVERDUE',days,label:Math.abs(days) === 1 ? '1 day overdue' : Math.abs(days) + ' days overdue',date:due};
+    if (days === 0) return {kind:'TODAY',days,label:'Due today',date:due};
+    if (days === 1) return {kind:'UPCOMING',days,label:'Tomorrow',date:due};
+    return {kind:'UPCOMING',days,label:'In ' + days + ' days',date:due};
+  }
+  function followupRank(lead) {
+    const info = followupInfo(lead);
+    if (info.kind === 'OVERDUE') return info.days;
+    if (info.kind === 'TODAY') return 0;
+    if (info.kind === 'UPCOMING') return info.days;
+    return Number.POSITIVE_INFINITY;
+  }
+  function followupBadge(lead) {
+    const info = followupInfo(lead);
+    if (info.kind === 'NONE') return null;
+    return node('span','followup-badge followup-' + info.kind.toLowerCase(),info.label);
+  }
+  function renderFollowupSummary() {
+    const counts = {ALL:state.leads.length,NEEDS:0,OVERDUE:0,TODAY:0,UPCOMING:0};
+    for (const lead of state.leads) {
+      const kind = followupInfo(lead).kind;
+      if (kind !== 'NONE') { counts.NEEDS += 1; counts[kind] += 1; }
+    }
+    $('followup-all-count').textContent = counts.ALL;
+    $('followup-needs-count').textContent = counts.NEEDS;
+    $('followup-overdue-count').textContent = counts.OVERDUE;
+    $('followup-today-count').textContent = counts.TODAY;
+    $('followup-upcoming-count').textContent = counts.UPCOMING;
+    document.querySelectorAll('[data-followup-filter]').forEach(button => {
+      const active = button.dataset.followupFilter === state.followup;
+      button.classList.toggle('active',active);
+      button.setAttribute('aria-pressed',String(active));
+    });
+  }
   function readStorage(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } }
   function saveStorage(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Storage is optional in private/restricted browsers. */ } }
   function savePreferences() {
@@ -171,7 +221,8 @@
     const score = lead => Number.isFinite(Number(lead.score)) ? Number(lead.score) : 0;
     const nameOrder = String(a.name || a.client_id).localeCompare(String(b.name || b.client_id), undefined, {sensitivity:'base',numeric:true});
     let order = 0;
-    if (state.sort === 'name-asc' || state.sort === 'name-desc') order = nameOrder * (state.sort === 'name-desc' ? -1 : 1);
+    if (state.followup !== 'ALL') order = followupRank(a) - followupRank(b);
+    else if (state.sort === 'name-asc' || state.sort === 'name-desc') order = nameOrder * (state.sort === 'name-desc' ? -1 : 1);
     else if (state.sort === 'score-asc' || state.sort === 'score-desc') order = (score(a) - score(b)) * (state.sort === 'score-desc' ? -1 : 1);
     else {
       const priority = {HIGH:0,MEDIUM:1,LOW:2};
@@ -286,8 +337,10 @@
       const job = state.jobs.get(keyOf(lead));
       const status = running(job) ? 'working' : job?.status === 'error' ? 'failed' : lead.preview_state || (lead.demo_ready ? 'ready' : 'missing');
       const workflowStatus = workflowOf(lead).status;
+      const followup = followupInfo(lead);
+      const followupMatch = state.followup === 'ALL' || (state.followup === 'NEEDS' ? followup.kind !== 'NONE' : followup.kind === state.followup);
       return (!query || searchable.includes(query)) && (state.priority === 'ALL' || lead.priority === state.priority) &&
-        (state.workflow === 'ALL' || state.workflow === workflowStatus) &&
+        (state.workflow === 'ALL' || state.workflow === workflowStatus) && followupMatch &&
         (state.website === 'ALL' || state.website === status || (state.website === 'missing' && status === 'incomplete'));
     }).sort(compareLeads);
   }
@@ -297,6 +350,7 @@
     const focusedKey = list.contains(document.activeElement) ? document.activeElement.dataset.key : null;
     list.replaceChildren();
     list.setAttribute('aria-busy','false');
+    renderFollowupSummary();
     const filtered = filteredLeads();
     $('visible-count').textContent = `${filtered.length} ${filtered.length === 1 ? 'business' : 'businesses'}`;
     $('saved-count').textContent = `${state.leads.length} saved · ${state.leads.filter(lead => lead.demo_ready).length} websites ready`;
@@ -316,7 +370,7 @@
       action.type = 'button';
       action.addEventListener('click', () => {
         if (!state.leads.length) return openSearch();
-        $('lead-search').value = ''; $('website-filter').value = 'ALL'; $('workflow-filter').value = 'ALL'; state.website = 'ALL'; state.workflow = 'ALL'; state.priority = 'ALL'; renderList();
+        $('lead-search').value = ''; $('website-filter').value = 'ALL'; $('workflow-filter').value = 'ALL'; state.website = 'ALL'; state.workflow = 'ALL'; state.followup = 'ALL'; state.priority = 'ALL'; renderList();
       });
       empty.append(action); list.append(empty); return;
     }
@@ -331,8 +385,10 @@
       row.append(top,node('span','lead-location',lead.address || 'No address recorded'));
       const bottom = node('span','lead-row-bottom');
       const label = busy ? 'Building website…' : job?.status === 'error' || lead.preview_state === 'failed' ? 'Needs attention' : lead.demo_ready ? 'Website ready' : 'Not built yet';
-      bottom.append(node('span',`priority-label ${lead.priority.toLowerCase()}`,lead.priority[0] + lead.priority.slice(1).toLowerCase()), workflowChip(lead),
-        node('span',`row-website-status ${busy ? 'working' : lead.demo_ready ? 'ready' : ''}`,label));
+      bottom.append(node('span',`priority-label ${lead.priority.toLowerCase()}`,lead.priority[0] + lead.priority.slice(1).toLowerCase()), workflowChip(lead));
+      const dueBadge = followupBadge(lead);
+      if (dueBadge) bottom.append(dueBadge);
+      bottom.append(node('span',`row-website-status ${busy ? 'working' : lead.demo_ready ? 'ready' : ''}`,label));
       row.append(bottom);
       row.addEventListener('click', () => selectLead(key, true));
       row.addEventListener('keydown', event => {
@@ -703,6 +759,10 @@
   });
   document.querySelectorAll('[data-priority]').forEach(button => button.addEventListener('click',()=>{state.priority = button.dataset.priority;renderList();}));
   $('lead-search').addEventListener('input',renderList);
+  document.querySelectorAll('[data-followup-filter]').forEach(button => button.addEventListener('click',()=>{
+    state.followup = button.dataset.followupFilter;
+    renderList();
+  }));
   $('workflow-filter').addEventListener('change',()=>{state.workflow = $('workflow-filter').value;renderList();});
   $('website-filter').addEventListener('change',()=>{state.website = $('website-filter').value;renderList();});
   $('lead-sort').addEventListener('change',()=>{state.sort = sortModes.includes($('lead-sort').value) ? $('lead-sort').value : 'priority';savePreferences();renderList();});
