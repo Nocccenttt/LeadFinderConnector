@@ -1566,3 +1566,16 @@ select {
   color:#d7b96f;
   box-shadow:inset 0 0 0 1px #ffffff08,0 6px 18px #00000024;
 }
+
+.brand-logo {
+  display:block;
+  width:210px;
+  max-width:42vw;
+  height:auto;
+}
+@media(max-width:800px) {
+  .brand-logo {
+    width:168px;
+    max-width:52vw;
+  }
+}
