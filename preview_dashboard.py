@@ -70,16 +70,37 @@ def preview_info(folder):
         "incomplete": "The website files are incomplete. Build it again to create a complete preview.",
         "missing": "No website has been built for this business yet.",
     }[state]
+    qa = {"status": "NOT RUN", "checks_passed": 0, "checks_total": 0, "issues": []}
+    try:
+        report = json.loads((folder / "quality_report.json").read_text(encoding="utf-8"))
+        if isinstance(report, dict):
+            qa["status"] = str(report.get("status") or "NOT RUN")
+            checks = report.get("checks") if isinstance(report.get("checks"), dict) else {}
+            for value in checks.values():
+                check_status = value.get("status") if isinstance(value, dict) else value
+                if check_status:
+                    qa["checks_total"] += 1
+                    if check_status == "PASS":
+                        qa["checks_passed"] += 1
+                if isinstance(value, dict):
+                    for issue in value.get("issues", []) if isinstance(value.get("issues"), list) else []:
+                        if issue and len(qa["issues"]) < 5:
+                            qa["issues"].append(str(issue))
+            for warning in report.get("warnings", []) if isinstance(report.get("warnings"), list) else []:
+                if warning and len(qa["issues"]) < 5:
+                    qa["issues"].append(str(warning))
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
     for filename in ("STATUS.json", "quality_report.json"):
         try:
             status = json.loads((folder / filename).read_text(encoding="utf-8")).get("status")
             if status in ("FAILED", "NEEDS REVIEW"):
                 state = "failed"
-                message = "The last build needs attention. You can retry the build."
+                message = "The last build needs attention. Review the quality checks or retry the build."
         except (OSError, ValueError, AttributeError):
             continue
     return {
-        "available": available, "state": state, "message": message, "missing_assets": missing,
+        "available": available, "state": state, "message": message, "missing_assets": missing, "qa": qa,
         "preview_url": url_for("demo_named", priority=folder.parent.name, name=folder.name) if available else "",
         "download_url": url_for("download_demo_named", priority=folder.parent.name, name=folder.name) if available else "",
     }
@@ -122,6 +143,7 @@ def discover_leads():
                 "can_generate": resolve_client(priority, client_folder.name) is not None,
                 "preview_state":preview["state"],
                 "preview_message":preview["message"],
+                "qa": preview["qa"],
                 "folder": str(client_folder.relative_to(ROOT)),
                 "demo_ready": ready,
                 "demo_url": url_for("demo_named", priority=priority, name=client_folder.name) if ready else "",
