@@ -11,6 +11,24 @@ To change supplied keys later, click **API keys** in the app. Enter a replacemen
 
 Setup can be retried after a failed download. Existing `.env` files and saved businesses are preserved. If opening fails, a message identifies the problem; startup logs are in the installed app's `logs` folder. The launcher chooses an available local port and remembers it for later launches.
 
+## Setting up a Git checkout
+
+If you open LeadFinder from a Git checkout in VS Code, run the installer from that repository folder:
+
+```powershell
+.\INSTALL_LEADFINDER.bat
+```
+
+The installer recognizes the repository layout and prepares `.venv`, packages, and the browser for that checkout. Existing `.env`, saved businesses in `codex_handoffs`, and files in `outputs` stay in place. The desktop shortcut points to this checkout; setup does not create a separate app workspace in `%LOCALAPPDATA%`.
+
+After setup succeeds, open the app again with:
+
+```powershell
+.\START_LEADFINDER.bat
+```
+
+If the launcher reports that setup is incomplete, rerun `INSTALL_LEADFINDER.bat` in the same folder. A Git pull updates application code; local setup creates the Python environment needed to run it.
+
 ## Managing the saved business list
 
 Use **Sort by** to order businesses by priority, opportunity score in either direction, or name A–Z or Z–A. The app remembers your sort choice for this workspace, and sorting works with the search and status filters.

@@ -3,7 +3,7 @@ import json
 import hashlib
 import os
 import secrets
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from threading import Lock, Thread
 from time import time
@@ -29,6 +29,27 @@ jobs_lock = Lock()
 settings_token = secrets.token_urlsafe(32)
 
 
+@app.before_request
+def require_local_workspace():
+    # The dashboard is a local app, including searches/builds that use saved keys.
+    if urlparse(request.host_url).hostname not in ('localhost', '127.0.0.1', '::1'):
+        return jsonify({'error': 'Open LeadFinder using its local app address.'}), 403
+    origin = request.headers.get('Origin')
+    if request.method in ('POST', 'PUT', 'PATCH', 'DELETE') and origin and origin.rstrip('/') != request.host_url.rstrip('/'):
+        return jsonify({'error': 'Make changes from the local LeadFinder workspace.'}), 403
+
+
+@app.after_request
+def isolate_generated_previews(response):
+    # Generated HTML must not share the dashboard's origin, even in a new tab.
+    if request.endpoint in ('demo_named', 'demo_asset_named'):
+        response.headers['Content-Security-Policy'] = 'sandbox allow-scripts'
+        asset = (request.view_args or {}).get('asset', '')
+        if Path(asset).suffix.lower() in ('.ttf', '.otf', '.woff', '.woff2'):
+            response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
+
+
 def preview_info(folder):
     website = folder / "website"
     missing = []
@@ -37,7 +58,7 @@ def preview_info(folder):
         try:
             valid = (website.resolve().parent == folder.resolve() and asset.is_file()
                      and asset.resolve().parent == website.resolve() and asset.stat().st_size > 0)
-        except OSError:
+        except (OSError, RuntimeError):
             # A build can replace files while this read-only status request runs.
             valid = False
         if not valid:
@@ -67,7 +88,7 @@ def discover_leads():
     leads = []
     for priority in ("HIGH", "MEDIUM", "LOW"):
         folder = HANDOFFS / priority
-        if not folder.exists():
+        if not folder.is_dir():
             continue
         for client_folder in folder.iterdir():
             if resolve_lead_folder(priority, client_folder.name) is None:
@@ -262,19 +283,28 @@ def generate():
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
         return jsonify({"error": "Expected a JSON object."}), 400
-    niche = str(data.get("niche", "")).strip()
-    area = str(data.get("area", "")).strip()
+    niche, area = data.get("niche", ""), data.get("area", "")
+    if not isinstance(niche, str) or not isinstance(area, str):
+        return jsonify({"error": "Enter the business type and location as text."}), 400
+    niche, area = niche.strip(), area.strip()
     if not niche or not area:
         return jsonify({"error": "Business type and location are required."}), 400
+    if len(niche) > 180 or len(area) > 180:
+        return jsonify({"error": "Keep the business type and location within 180 characters each."}), 400
     try:
-        max_results = int(data.get("max_results", 25))
-    except (TypeError, ValueError):
-        max_results = 25
+        limit = data.get("max_results", 25)
+        if isinstance(limit, bool) or not isinstance(limit, (int, str)):
+            raise ValueError
+        max_results = int(limit)
+    except (TypeError, ValueError, OverflowError):
+        return jsonify({"error": "Choose a whole number of businesses to find."}), 400
     max_results = max(1, min(max_results, 100))
     job_id = uuid4().hex
     with jobs_lock:
         if any(job.get("kind") == "leads" and job.get("status") in ("queued", "running") for job in jobs.values()):
             return jsonify({"error": "Lead generation is already running."}), 409
+        if any(job.get("kind") == "website" and job.get("status") in ("queued", "running") for job in jobs.values()):
+            return jsonify({"error": "Wait for the current website builds to finish before starting a business search."}), 409
         jobs[job_id] = {"status": "queued", "message": "Queued...", "log": [], "percent": 0, "high": 0, "medium": 0, "low": 0}
         jobs[job_id]["kind"] = "leads"
         jobs[job_id]["started_at"] = time()
@@ -402,12 +432,16 @@ def resolve_client(priority, name):
 def resolve_lead_folder(priority, name):
     priority = str(priority or "").upper()
     name = str(name or "")
-    if priority not in ("HIGH", "MEDIUM", "LOW") or not name or name in (".", "..") or any(c in name for c in ("/", "\\", ":")):
+    if priority not in ("HIGH", "MEDIUM", "LOW") or not name or name in (".", "..") or any(c in name for c in ("/", "\\", ":", "\0")):
         return None
-    base = (HANDOFFS / priority).resolve()
-    folder = (base / name).resolve()
-    if base.parent == HANDOFFS.resolve() and folder.parent == base and folder.is_dir():
-        return folder
+    try:
+        handoffs = HANDOFFS.resolve()
+        base = (handoffs / priority).resolve()
+        folder = (base / name).resolve()
+        if base == handoffs / priority and folder == base / name and folder.is_dir():
+            return folder
+    except (OSError, RuntimeError, ValueError):
+        pass
     return None
 
 
@@ -437,6 +471,8 @@ def generate_landing_page():
         client_folder = resolve_client(data.get("priority"), data.get("name"))
         if not client_folder:
             return jsonify({"error": "Lead handoff not found. Generate the lead handoff first."}), 404
+        if any(job.get("kind") == "leads" and job.get("status") in ("queued", "running") for job in jobs.values()):
+            return jsonify({"error": "Wait for the current business search to finish before building a website."}), 409
         if any(job.get("client") == str(client_folder) and job.get("status") in ("queued", "running") for job in jobs.values()):
             return jsonify({"error": "A landing page is already being generated for this lead."}), 409
         jobs[job_id] = {"status": "queued", "message": "Queued website build...", "kind":"website",
@@ -461,9 +497,12 @@ def get_demo_folder(priority, name):
     if folder is None:
         return None
     website = folder / "website"
-    if website.resolve().parent != folder or not (website / "index.html").is_file():
-        return None
-    if (website / "index.html").resolve().parent != website.resolve():
+    try:
+        if website.resolve().parent != folder or not (website / "index.html").is_file():
+            return None
+        if (website / "index.html").resolve().parent != website.resolve():
+            return None
+    except (OSError, RuntimeError, ValueError):
         return None
     return folder
 
@@ -475,8 +514,12 @@ def demo_asset_named(priority, name, asset):
     if not folder:
         return "Landing page not found.", 404
     website = folder / "website"
-    file_path = (website / asset).resolve()
-    if not file_path.is_file() or website.resolve() not in file_path.parents:
+    try:
+        file_path = (website / asset).resolve()
+        valid = file_path.is_file() and website.resolve() in file_path.parents
+    except (OSError, RuntimeError, ValueError):
+        valid = False
+    if not valid:
         return "Asset not found.", 404
     return send_from_directory(website, file_path.relative_to(website.resolve()).as_posix())
 
@@ -518,14 +561,23 @@ def download_demo_named(priority, name):
 @app.get("/export")
 def export():
     leads = discover_leads()
-    export_file = ROOT / "outputs" / "leadfinder_export.csv"
-    export_file.parent.mkdir(exist_ok=True)
     fields = ["name", "address", "phone", "website", "priority", "score", "reason"]
-    with export_file.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows({field: lead.get(field, "") for field in fields} for lead in leads)
-    return send_file(export_file, as_attachment=True, download_name="leadfinder_leads.csv")
+    def text_cell(value):
+        if isinstance(value, list):
+            value = '; '.join(str(item) for item in value)
+        text = str(value) if value is not None else ''
+        # Web-sourced names and phone numbers must remain text in spreadsheets.
+        if text.lstrip('\ufeff \t\r\n').startswith(('=', '+', '-', '@')):
+            text = "'" + text
+        return text
+
+    file = StringIO(newline='')
+    writer = csv.DictWriter(file, fieldnames=fields)
+    writer.writeheader()
+    writer.writerows({field: text_cell(lead.get(field, '')) for field in fields} for lead in leads)
+    # Each download owns its snapshot; a second export cannot replace its bytes.
+    package = BytesIO(file.getvalue().encode('utf-8-sig'))
+    return send_file(package, as_attachment=True, download_name="leadfinder_leads.csv", mimetype='text/csv')
 
 
 if __name__ == "__main__":

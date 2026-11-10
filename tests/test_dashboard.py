@@ -96,14 +96,19 @@ class DashboardContractTests(WorkspaceFixture):
     def test_session_exposes_resumable_jobs_without_credentials(self):
         with patch.object(dashboard, 'Thread'), patch.dict(os.environ, {'GOOGLE_MAPS_API_KEY': 'secret-maps', 'DEEPSEEK_API_KEY': 'secret-model'}):
             website = self.client.post('/generate-landing-page', json={'priority': 'HIGH', 'name': self.alpha.name}).get_json()
-            search = self.client.post('/generate', json={'niche': 'Roofing', 'area': 'Raleigh'}).get_json()
             response = self.client.get('/session')
             session = response.get_json()
+            jobs = {job['job_id']: job for job in session['active_jobs']}
+            self.assertEqual(jobs[website['job_id']]['client_id'], self.alpha.name)
+            self.assertEqual(jobs[website['job_id']]['kind'], 'website')
+            self.assertNotIn('secret-', response.get_data(as_text=True))
+            with dashboard.jobs_lock:
+                dashboard.jobs[website['job_id']]['status'] = 'complete'
+            search = self.client.post('/generate', json={'niche': 'Roofing', 'area': 'Raleigh'}).get_json()
+            response = self.client.get('/session')
+            self.assertEqual(response.get_json()['active_jobs'][0]['job_id'], search['job_id'])
+            self.assertEqual(response.get_json()['active_jobs'][0]['kind'], 'leads')
         self.assertEqual(session['capabilities'], {'search_configured': True, 'website_configured': True})
-        jobs = {job['job_id']: job for job in session['active_jobs']}
-        self.assertEqual(jobs[website['job_id']]['client_id'], self.alpha.name)
-        self.assertEqual(jobs[website['job_id']]['kind'], 'website')
-        self.assertEqual(jobs[search['job_id']]['kind'], 'leads')
         self.assertNotIn('secret-', response.get_data(as_text=True))
         self.assertEqual(session['workspace_id'], self.client.get('/session').get_json()['workspace_id'])
 
@@ -552,4 +557,198 @@ class DashboardBrowserTests(WorkspaceFixture):
         self.page.evaluate('() => new Promise(resolve => requestAnimationFrame(resolve))')
         expect(self.page.locator('.lead-row')).to_have_count(3)
         expect(self.page.locator('.lead-row').filter(has_text=self.alpha.name)).to_have_count(0)
+        self.assertEqual(self.errors, [])
+
+    def test_generated_preview_isolated_from_app_and_still_runs_local_assets(self):
+        from playwright.sync_api import expect
+        import shutil
+        # Security checks must cross the real HTTP/CORS boundary, not the
+        # session response stub used by unrelated dashboard interaction tests.
+        self.page.unroute('**/session')
+        website = self.alpha / 'website'
+        (website / 'fonts').mkdir()
+        shutil.copyfile(dashboard.APP_ROOT / 'assets/fonts/Geist.ttf', website / 'fonts/Geist.ttf')
+        (website / 'index.html').write_text('''<!doctype html><link rel="stylesheet" href="styles.css">
+            <h1>Isolated preview</h1><button id="preview-action">Try interaction</button><script src="script.js"></script>''')
+        (website / 'styles.css').write_text('''@font-face{font-family:AuditFont;src:url("fonts/Geist.ttf")}
+            body{font-family:AuditFont,sans-serif;color:rgb(12,34,56)}''')
+        (website / 'script.js').write_text('''document.body.dataset.scriptLoaded='yes';
+            document.getElementById('preview-action').onclick=()=>document.body.dataset.clicked='yes';
+            try { parent.document.documentElement.dataset.previewAttack='yes'; document.body.dataset.parentAccess='allowed'; }
+            catch { document.body.dataset.parentAccess='blocked'; }
+            try { localStorage.setItem('preview-audit','unsafe'); document.body.dataset.storageAccess='allowed'; }
+            catch { document.body.dataset.storageAccess='blocked'; }
+            for (const [name,path] of [['session','/session'],['settings','/api-settings']]) {
+                fetch(path).then(response=>response.json()).then(()=>document.body.dataset[name]='allowed')
+                    .catch(()=>document.body.dataset[name]='blocked');
+            }''')
+        self.select(self.alpha)
+        expect(self.page.locator('#frame-stage')).to_be_visible()
+        expect(self.page.locator('#preview-frame')).to_have_attribute('sandbox', 'allow-scripts')
+        frame = self.page.frame_locator('#preview-frame')
+        expect(frame.locator('body')).to_have_attribute('data-script-loaded', 'yes')
+        expect(frame.locator('body')).to_have_attribute('data-parent-access', 'blocked')
+        expect(frame.locator('body')).to_have_attribute('data-storage-access', 'blocked')
+        expect(frame.locator('body')).to_have_attribute('data-session', 'blocked')
+        expect(frame.locator('body')).to_have_attribute('data-settings', 'blocked')
+        self.assertIsNone(self.page.locator('html').get_attribute('data-preview-attack'))
+        self.assertEqual(frame.locator('body').evaluate('(body)=>getComputedStyle(body).color'), 'rgb(12, 34, 56)')
+        self.assertTrue(frame.locator('body').evaluate('async ()=>{await document.fonts.load("16px AuditFont");return document.fonts.check("16px AuditFont");}'))
+        frame.locator('#preview-action').click()
+        expect(frame.locator('body')).to_have_attribute('data-clicked', 'yes')
+        self.page.get_by_role('button', name='Mobile', exact=True).click()
+        self.assertEqual(frame.locator('html').evaluate('()=>innerWidth'), 390)
+        with self.page.expect_popup() as opened:
+            self.page.locator('#open-preview').click()
+        popup = opened.value
+        try:
+            expect(popup.locator('body')).to_have_attribute('data-session', 'blocked')
+            expect(popup.locator('body')).to_have_attribute('data-settings', 'blocked')
+            expect(popup.locator('body')).to_have_attribute('data-storage-access', 'blocked')
+        finally:
+            popup.close()
+        self.assertEqual(self.errors, [])
+
+    def test_key_save_locks_dialog_and_ignores_an_older_key_test(self):
+        from playwright.sync_api import expect
+        held_tests, held_saves = [], []
+        def settings(route):
+            if route.request.method != 'POST':
+                route.continue_()
+            elif route.request.post_data_json['action'] == 'test':
+                held_tests.append(route)
+            else:
+                held_saves.append(route)
+        self.page.route('**/api-settings', settings)
+        with patch.dict(os.environ, {'DEEPSEEK_API_KEY': 'test-old-1234'}):
+            self.page.locator('#settings-button').click()
+            expect(self.page.locator('#save-settings')).to_be_enabled()
+            self.page.locator('#test-deepseek').click()
+            expect(self.page.locator('#test-deepseek')).to_have_text('Testing…')
+            self.page.locator('#key-deepseek').fill('test-new-5678')
+            self.page.locator('#save-settings').click()
+            expect(self.page.locator('#settings-message')).to_have_text('Saving keys…')
+            expect(self.page.locator('#settings-dialog').get_by_role('button', name='Close API settings')).to_be_disabled()
+            expect(self.page.locator('#test-deepseek')).to_be_disabled()
+            self.page.keyboard.press('Escape')
+            expect(self.page.locator('#settings-dialog')).to_be_visible()
+            self.assertEqual((len(held_tests), len(held_saves)), (1, 1))
+            held_saves[0].continue_()
+            expect(self.page.locator('#settings-message')).to_contain_text('API keys saved')
+            expect(self.page.locator('#key-status-deepseek')).to_contain_text('5678')
+            with self.page.expect_response(lambda response: response.url.endswith('/api-settings')) as response:
+                held_tests[0].fulfill(json={'ok': True, 'message': 'Old key accepted.'})
+            response.value.finished()
+            self.page.evaluate('() => new Promise(resolve => requestAnimationFrame(resolve))')
+            expect(self.page.locator('#key-result-deepseek')).to_have_text('')
+            self.assertEqual(os.getenv('DEEPSEEK_API_KEY'), 'test-new-5678')
+            self.page.locator('#settings-dialog').get_by_role('button', name='Close API settings').click()
+        self.assertEqual(self.errors, [])
+
+    def test_lost_search_reply_resumes_existing_job_and_blocks_website_builds(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        self.select(self.beta)
+        posts = []
+        def search(route):
+            posts.append(route.request.post_data_json)
+            with dashboard.jobs_lock:
+                dashboard.jobs['recovered-search'] = {'kind': 'leads', 'status': 'running', 'message': 'Recovered active search.'}
+            route.abort('failed')
+        self.page.route('**/generate', search)
+        self.page.locator('#find-button').click()
+        self.page.locator('#niche').fill('Roofing')
+        self.page.locator('#area').fill('Raleigh')
+        self.page.locator('#search-submit').click()
+        expect(self.page.locator('#find-dialog')).to_be_hidden()
+        expect(self.page.locator('#search-message')).to_contain_text('Recovered active search.')
+        expect(self.page.locator('#find-button')).to_be_disabled()
+        expect(self.page.locator('#build-button')).to_be_disabled()
+        expect(self.page.locator('#build-message')).to_contain_text('business search to finish')
+        self.assertEqual(len(posts), 1)
+        with dashboard.jobs_lock:
+            dashboard.jobs['recovered-search']['status'] = 'complete'
+        expect(self.page.locator('#find-button')).to_be_enabled()
+        expect(self.page.locator('#build-button')).to_be_enabled()
+        self.assertEqual(self.errors, [])
+
+    def test_old_website_status_cannot_replace_a_new_build_from_another_tab(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        held = []
+        self.page.route('**/landing-page-status?job_id=1', lambda route: held.append(route), times=1)
+        self.select(self.beta)
+        self.page.locator('#build-button').click()
+        expect(self.page.locator('#website-state')).to_have_text('Building website')
+        expect(self.page.locator('#find-button')).to_be_disabled()
+        with dashboard.jobs_lock:
+            dashboard.jobs['replacement-build'] = {'kind': 'website', 'status': 'running', 'priority': 'MEDIUM',
+                'client_id': self.beta.name, 'client': str(self.beta), 'message': 'New build from another tab.'}
+        self.statuses['replacement-build'] = {'status': 'running', 'message': 'New build from another tab.'}
+        self.page.locator('#refresh-button').click()
+        expect(self.page.locator('#build-message')).to_contain_text('New build from another tab.')
+        self.assertEqual(len(held), 1)
+        with self.page.expect_response(lambda response: response.url.endswith('job_id=1')) as response:
+            held[0].fulfill(json={'status': 'error', 'message': 'Obsolete failure.'})
+        response.value.finished()
+        self.page.evaluate('() => new Promise(resolve => requestAnimationFrame(resolve))')
+        expect(self.page.locator('#website-state')).to_have_text('Building website')
+        expect(self.page.locator('#job-error')).to_be_hidden()
+        self.website(self.beta)
+        self.statuses['replacement-build'] = {'status': 'complete', 'message': 'Ready.'}
+        expect(self.page.locator('#download-button')).to_be_enabled()
+        expect(self.page.locator('#find-button')).to_be_enabled()
+        self.assertEqual(self.errors, [])
+
+    def test_old_search_status_cannot_replace_a_new_search_from_another_tab(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        held = []
+        self.page.route('**/generate', lambda route: route.fulfill(json={'job_id': 'old-search'}))
+        self.page.route('**/job-status?job_id=old-search', lambda route: held.append(route), times=1)
+        self.page.locator('#find-button').click()
+        self.page.locator('#niche').fill('Roofing')
+        self.page.locator('#area').fill('Raleigh')
+        self.page.locator('#search-submit').click()
+        expect(self.page.locator('#find-dialog')).to_be_hidden()
+        with dashboard.jobs_lock:
+            dashboard.jobs['new-search'] = {'kind': 'leads', 'status': 'running', 'message': 'New search from another tab.'}
+        self.page.locator('#refresh-button').click()
+        expect(self.page.locator('#search-message')).to_contain_text('New search from another tab.')
+        self.assertEqual(len(held), 1)
+        with self.page.expect_response(lambda response: response.url.endswith('job_id=old-search')) as response:
+            held[0].fulfill(status=404, json={'message': 'Old session ended.'})
+        response.value.finished()
+        self.page.evaluate('() => new Promise(resolve => requestAnimationFrame(resolve))')
+        expect(self.page.locator('#search-message')).to_contain_text('New search from another tab.')
+        expect(self.page.locator('#find-button')).to_be_disabled()
+        with dashboard.jobs_lock:
+            dashboard.jobs['new-search']['status'] = 'complete'
+        expect(self.page.locator('#find-button')).to_be_enabled()
+        self.assertEqual(self.errors, [])
+
+    def test_refreshed_search_that_disappears_unlocks_the_workspace(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        held = []
+        def search(route):
+            with dashboard.jobs_lock:
+                dashboard.jobs['ended-search'] = {'kind': 'leads', 'status': 'running', 'message': 'Checking businesses.'}
+            route.fulfill(json={'job_id': 'ended-search'})
+        self.page.route('**/generate', search)
+        self.page.route('**/job-status?job_id=ended-search', lambda route: held.append(route), times=1)
+        self.page.locator('#find-button').click()
+        self.page.locator('#niche').fill('Roofing')
+        self.page.locator('#area').fill('Raleigh')
+        self.page.locator('#search-submit').click()
+        expect(self.page.locator('#find-dialog')).to_be_hidden()
+        self.page.locator('#refresh-button').click()
+        expect(self.page.locator('#search-message')).to_contain_text('Checking businesses.')
+        with dashboard.jobs_lock:
+            dashboard.jobs.clear()
+        self.assertEqual(len(held), 1)
+        held[0].fulfill(status=404, json={'message': 'Session ended.'})
+        expect(self.page.locator('#search-message')).to_contain_text('search session has ended')
+        expect(self.page.locator('#find-button')).to_be_enabled()
+        expect(self.page.locator('#clear-list-button')).to_be_enabled()
         self.assertEqual(self.errors, [])

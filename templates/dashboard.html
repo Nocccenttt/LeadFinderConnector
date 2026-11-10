@@ -45,7 +45,7 @@
         <div class="preview-toolbar"><div class="device-switch" role="group" aria-label="Preview device"><button data-device="desktop" aria-pressed="true">Desktop</button><button data-device="mobile" aria-pressed="false">Mobile</button></div><span id="preview-size" class="preview-size"></span><div class="preview-toolbar-actions"><button id="retry-preview" class="button icon-button" aria-label="Reload preview" title="Reload preview">↻</button><a id="open-preview" class="button compact quiet" target="_blank" rel="noopener" aria-disabled="true">Open in new tab <span aria-hidden="true">↗</span></a></div></div>
         <div id="preview-canvas" class="preview-canvas" aria-busy="false">
           <div id="preview-placeholder" class="preview-placeholder"><span id="preview-indicator" class="preview-indicator" aria-hidden="true">↗</span><h3 id="preview-title">No website yet.</h3><p id="preview-description">Build a website for this business to preview it here.</p><button id="preview-retry-button" class="button" hidden>Try loading again</button></div>
-          <div id="frame-stage" class="frame-stage" hidden><iframe id="preview-frame" title="Generated website preview" src="about:blank"></iframe></div>
+          <div id="frame-stage" class="frame-stage" hidden><iframe id="preview-frame" title="Generated website preview" sandbox="allow-scripts" src="about:blank"></iframe></div>
         </div>
       </div>
     </section>

@@ -47,17 +47,12 @@ try {
     Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $staging 'source')
     $source = @(Get-ChildItem -LiteralPath (Join-Path $staging 'source') -Directory)
     if ($source.Count -ne 1 -or !(Test-Path (Join-Path $source[0].FullName 'scripts\Install-LeadFinder.ps1'))) { throw 'The downloaded application package is incomplete.' }
-    New-Item -ItemType Directory -Force -Path $appRoot | Out-Null
-    # Only application files are installed; business data and credentials stay local.
-    Get-ChildItem -LiteralPath $source[0].FullName -File | Where-Object { $_.Extension -eq '.py' -or $_.Name -in @('requirements.txt','.env.example','START_LEADFINDER.bat','STOP_LEADFINDER.bat','DOWNLOAD_LEADFINDER.bat') } | Copy-Item -Destination $appRoot -Force
-    foreach ($folder in @('assets','static','templates','scripts')) {
-        Copy-Item -LiteralPath (Join-Path $source[0].FullName $folder) -Destination $appRoot -Recurse -Force
-    }
-    $options = @{ AppRoot=$appRoot; ConfigSource=(Join-Path (Split-Path -Parent $env:LEADFINDER_SETUP_FILE) '.env') }
+    # The installer checks active work before replacing any installed files.
+    $options = @{ SourceRoot=$source[0].FullName; ConfigSource=(Join-Path (Split-Path -Parent $env:LEADFINDER_SETUP_FILE) '.env') }
     if ($env:LEADFINDER_NO_LAUNCH -eq '1') { $options.NoLaunch = $true }
     if ($env:LEADFINDER_SKIP_KEY_PROMPT -eq '1') { $options.SkipKeyPrompt = $true }
     if ($env:LEADFINDER_SHORTCUT_FOLDER) { $options.ShortcutFolder = $env:LEADFINDER_SHORTCUT_FOLDER }
-    & (Join-Path $appRoot 'scripts\Install-LeadFinder.ps1') @options
+    & (Join-Path $source[0].FullName 'scripts\Install-LeadFinder.ps1') @options
     if ($LASTEXITCODE -ne 0) { throw 'Application setup failed.' }
 } catch {
     Write-Host "Setup failed: $($_.Exception.Message)" -ForegroundColor Red

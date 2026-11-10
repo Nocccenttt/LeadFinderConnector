@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from api_usage_logger import log_usage
+from deepseek_response import MODEL, completion_text
 from design_renderer import render_choices, layout_css, implementation_report
 from reference_build import reference_build_plan, reference_build_css, install_reference_fonts
 from color_foundation import build_color_foundation, foundation_css
@@ -27,8 +28,6 @@ from copy_grounding import check_marketing_copy
 
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
-
-MODEL = "deepseek-chat"
 
 JS = r"""
 (() => {
@@ -787,6 +786,7 @@ def generate_copy(business, handoff):
         ],
         temperature=0.7,
         max_tokens=10000,
+        extra_body={"thinking": {"type": "disabled"}},
     )
 
     print("\nDeepSeek Usage:")
@@ -800,7 +800,7 @@ def generate_copy(business, handoff):
     except Exception as error:
         print(f"Usage logging skipped: {error}")
 
-    content = response.choices[0].message.content or "{}"
+    content = completion_text(response)
 
     try:
         result = json.loads(content)
@@ -1029,9 +1029,13 @@ Do not automatically make every page an overlay hero or use the same section ord
         "available_content": summary, "verified_business": business}, ensure_ascii=False)}]
     for attempt in range(2):
         response = client.chat.completions.create(model=MODEL, response_format={"type": "json_object"},
-                                                   messages=messages, temperature=.5, max_tokens=6000)
-        log_usage(get_business_name(business, {}) + " / composition", response.usage)
-        raw = response.choices[0].message.content or "{}"
+                                                   messages=messages, temperature=.5, max_tokens=6000,
+                                                   extra_body={"thinking": {"type": "disabled"}})
+        try:
+            log_usage(get_business_name(business, {}) + " / composition", response.usage)
+        except Exception as error:
+            print(f"Usage logging skipped: {error}")
+        raw = completion_text(response)
         if research_dir:
             folder = Path(research_dir)
             folder.mkdir(parents=True, exist_ok=True)
@@ -2532,16 +2536,20 @@ def generate_website(handoff_path, preserve_content=False):
 
     business = load_json(business_path)
 
+    previous_copy = handoff_path.parent / "GENERATED_COPY.json"
+    if preserve_content and not previous_copy.is_file():
+        raise RuntimeError("Saved copy is unavailable for this website. Use Rebuild if you want to create new copy.")
+    previous = load_json(previous_copy) if preserve_content else None
+    if preserve_content and (not isinstance(previous, dict) or not previous):
+        raise RuntimeError("Saved copy is unreadable. Use Rebuild if you want to create new copy.")
+
     niche = get_niche(business, handoff)
     strategy = build_seo_strategy(business, handoff)
     (handoff_path.parent / "SEO_STRATEGY.json").write_text(json.dumps(strategy, indent=2), encoding="utf-8")
 
     context = dict(handoff)
     context["_research_dir"] = str(handoff_path.parent / "REFERENCE_RESEARCH")
-    previous = None
-    previous_copy = handoff_path.parent / "GENERATED_COPY.json"
-    if preserve_content and previous_copy.is_file():
-        previous = load_json(previous_copy)
+    if previous is not None:
         context["_approved_content"] = previous
         context["previous_design"] = {key: value for key, value in previous.get("design_spec", {}).items()
                                       if key in ("direction", "reference_selection", "render_layout", "section_order", "page_blueprint")}
@@ -2608,7 +2616,6 @@ def generate_website(handoff_path, preserve_content=False):
     for filename, data in (("DESIGN_REFERENCES.json", {"status": "researched", "references": copy.get("reference_research", [])}),
                            ("DESIGN_BLUEPRINT.json", design)):
         (handoff_path.parent / filename).write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    (handoff_path.parent / "GENERATED_COPY.json").write_text(json.dumps(copy, indent=2, ensure_ascii=False), encoding="utf-8")
     (handoff_path.parent / "RENDERED_DESIGN.json").write_text(json.dumps({
         "selected_reference": design.get("reference_selection"), "render_layout": design["render_layout"],
         "previous_render_layout": render_choices(previous.get("design_spec", {})) if previous else None,
@@ -2752,6 +2759,8 @@ Images are generated as local files in `images/` for the concept build.
     print(f"[seo] Title: {copy.get('seo', {}).get('title', '')}")
     print(f"[seo] Primary keyword: {copy.get('seo', {}).get('primary_keyword', '')}")
 
+    # Keep the previous approved copy if rendering or writing the website fails.
+    previous_copy.write_text(json.dumps(copy, indent=2, ensure_ascii=False), encoding="utf-8")
     return output_dir
 
 
