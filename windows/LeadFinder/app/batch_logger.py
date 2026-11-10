@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 
 class BatchLogger:
@@ -9,7 +10,7 @@ class BatchLogger:
 
         timestamp = datetime.now().strftime(
             "%Y-%m-%d_%H-%M-%S"
-        )
+        ) + "_" + uuid4().hex[:8]
 
         self.run_dir = (
             Path("batch_runs")

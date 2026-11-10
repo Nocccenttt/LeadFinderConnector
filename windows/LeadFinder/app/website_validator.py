@@ -64,7 +64,7 @@ def validate(client_folder):
             issues.append("Missing title tag")
         if not soup.find("h1"):
             issues.append("Missing H1")
-        if client_name.lower() not in html.lower():
+        if client_name.casefold() not in soup.get_text(" ", strip=True).casefold():
             issues.append("Business name missing")
     else:
         issues.append("index.html missing")
@@ -125,7 +125,10 @@ def validate(client_folder):
     visible = BeautifulSoup(html, "html.parser")
     for node in visible.select("script, style, template, noscript"):
         node.decompose()
-    content = visible.get_text(" ", strip=True).lower()
+    content = visible.get_text(" ", strip=True).casefold()
+    # A verified business name (for example, "Certified Care") is not an
+    # invented credential. Other occurrences still receive the claim check.
+    content = content.replace(client_name.casefold(), '')
     for claim in FORBIDDEN_CLAIMS:
         if claim in content:
             report["warnings"].append(

@@ -1,5 +1,6 @@
 """Package the application explicitly, excluding local credentials and business data."""
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from zipfile import ZIP_DEFLATED, ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,22 +54,32 @@ def build_distribution(output, source=ROOT):
     font_readme = source / 'assets/fonts/README.txt'
     if font_readme.is_file():
         files.append(font_readme)
-    required = ['preview_dashboard.py', 'api_settings.py', 'templates/dashboard.html', 'static/dashboard.js',
+    required = ['preview_dashboard.py', 'api_settings.py', 'templates/dashboard.html', 'static/dashboard.js', 'static/dashboard.css',
                 'scripts/Install-LeadFinder.ps1', 'scripts/Start-LeadFinder.ps1',
                 'scripts/Stop-LeadFinder.ps1', 'scripts/launch_dashboard.py', 'assets/fonts/Geist.ttf',
                 'assets/fonts/LibreCaslonDisplay-Regular.ttf', 'assets/fonts/LibreCaslonText.ttf', *font_notices]
     for name in required:
         if source / name not in files or not (source / name).is_file():
             raise ValueError(f'Required application file missing: {name}')
+    source_root = source.resolve()
+    for file in set(files + [source / 'INSTALL_LEADFINDER.bat']):
+        if not file.is_file():
+            raise ValueError(f'Required application file missing: {file.relative_to(source)}')
+        if file.is_symlink() or source_root not in file.resolve().parents:
+            raise ValueError(f'Application package cannot contain linked files: {file}')
     output.parent.mkdir(parents=True, exist_ok=True)
-    with ZipFile(output, 'w', compression=ZIP_DEFLATED) as archive:
-        archive.write(source / 'INSTALL_LEADFINDER.bat', 'LeadFinder/INSTALL_LEADFINDER.bat')
-        archive.write(source / '.env.example', 'LeadFinder/.env.example')
-        archive.writestr('LeadFinder/READ_ME_FIRST.txt', README)
-        for file in sorted(set(files)):
-            if file.is_symlink():
-                raise ValueError(f'Application package cannot contain linked files: {file}')
-            archive.write(file, 'LeadFinder/app/' + file.relative_to(source).as_posix())
+    with NamedTemporaryFile(prefix=output.name + '.', suffix='.tmp', dir=output.parent, delete=False) as handle:
+        temporary = Path(handle.name)
+    try:
+        with ZipFile(temporary, 'w', compression=ZIP_DEFLATED) as archive:
+            archive.write(source / 'INSTALL_LEADFINDER.bat', 'LeadFinder/INSTALL_LEADFINDER.bat')
+            archive.write(source / '.env.example', 'LeadFinder/.env.example')
+            archive.writestr('LeadFinder/READ_ME_FIRST.txt', README)
+            for file in sorted(set(files)):
+                archive.write(file, 'LeadFinder/app/' + file.relative_to(source).as_posix())
+        temporary.replace(output)
+    finally:
+        temporary.unlink(missing_ok=True)
     return output
 
 

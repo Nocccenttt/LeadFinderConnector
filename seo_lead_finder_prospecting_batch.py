@@ -280,17 +280,56 @@ def safe_filename(value):
 def write_codex_handoff(lead, base_dir, niche="local business"):
     """Create a priority-folder handoff for one lead."""
     priority = lead.opportunity.upper()
-    business_dir = Path(base_dir) / priority / safe_filename(lead.name)
-    existing_file = business_dir / "business.json"
-    if existing_file.exists():
-        existing = json.loads(existing_file.read_text(encoding="utf-8"))
-        if (existing.get("business_name"), existing.get("address", "")) != (lead.name, lead.address):
-            identity = f"{lead.name.casefold()}|{lead.address.casefold()}"
-            suffix = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
-            business_dir = business_dir.with_name(f"{business_dir.name}-{suffix}")
+    if priority not in ("HIGH", "MEDIUM", "LOW"):
+        raise ValueError("Lead priority must be HIGH, MEDIUM, or LOW.")
+    base_dir = Path(base_dir).resolve()
+    identity = f"{lead.name.casefold()}|{lead.address.casefold()}"
+    suffix = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+    names = (safe_filename(lead.name), f"{safe_filename(lead.name)}-{suffix}")
+
+    def saved_record(folder):
+        business_file = folder / 'business.json'
+        if folder.resolve() != folder or business_file.resolve() != business_file:
+            raise ValueError('The saved business path is linked elsewhere.')
+        if not business_file.exists():
+            return {}
+        record = json.loads(business_file.read_text(encoding='utf-8'))
+        if not isinstance(record, dict):
+            raise ValueError('Saved business data must be a JSON object.')
+        return record
+
+    def matches(record):
+        return (record.get('business_name'), record.get('address', '')) == (lead.name, lead.address)
+
+    business_dir = base_dir / priority / names[0]
+    existing = saved_record(business_dir)
+    if business_dir.exists() and not matches(existing):
+        business_dir = base_dir / priority / names[1]
+        existing = saved_record(business_dir)
+        if business_dir.exists() and not matches(existing):
+            raise ValueError('The saved business folder belongs to a different lead.')
+    if not business_dir.exists():
+        # A changed score moves this business with its generated work instead of
+        # creating another list entry. Existing duplicate records are not merged.
+        for old_priority in ('HIGH', 'MEDIUM', 'LOW'):
+            if old_priority == priority:
+                continue
+            for name in names:
+                old_folder = base_dir / old_priority / name
+                record = saved_record(old_folder)
+                if matches(record):
+                    business_dir.parent.mkdir(parents=True, exist_ok=True)
+                    old_folder.rename(business_dir)
+                    existing = record
+                    break
+            if existing:
+                break
     business_dir.mkdir(parents=True, exist_ok=True)
 
     data = {
+        # A new search updates discovered facts while retaining manually verified
+        # services, SEO settings, design references and other saved enrichment.
+        **existing,
         "business_name": lead.name,
         "business_type": niche,
         "niche": niche,
@@ -317,7 +356,7 @@ def write_codex_handoff(lead, base_dir, niche="local business"):
     )
 
     if priority == "LOW":
-        return
+        return business_dir
 
     prompt = f"""# Website Build Prompt
 
@@ -521,7 +560,7 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
         for lead in bucket:
             print(f"       [handoff] {priority}: {lead.name}", flush=True)
             business_dir = write_codex_handoff(lead, codex_dir, niche)
-            if priority in ("HIGH", "MEDIUM"):
+            if priority in ("HIGH", "MEDIUM") or (business_dir / 'AI_HANDOFF.json').is_file():
                 handoff_path = build_ai_handoff(business_dir / "business.json")
                 print(f"       [handoff] AI handoff ready: {handoff_path}", flush=True)
 

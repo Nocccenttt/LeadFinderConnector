@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from api_usage_logger import log_usage
+from deepseek_response import MODEL, completion_text
 from website_planning import (
     build_css_theme,
     build_design_blueprint,
@@ -20,8 +21,6 @@ from website_planning import (
 
 
 load_dotenv()
-
-MODEL = "deepseek-chat"
 
 
 SYSTEM_PROMPT = """
@@ -820,6 +819,7 @@ def generate_copy(business, handoff, seo_strategy=None, design_blueprint=None, r
         ],
         temperature=0.5,
         max_tokens=1800,
+        extra_body={"thinking": {"type": "disabled"}},
     )
 
     print("\nDeepSeek Usage:")
@@ -835,7 +835,7 @@ def generate_copy(business, handoff, seo_strategy=None, design_blueprint=None, r
             f"Usage logging skipped: {error}"
         )
 
-    content = response.choices[0].message.content or "{}"
+    content = completion_text(response)
 
     try:
         result = json.loads(content)

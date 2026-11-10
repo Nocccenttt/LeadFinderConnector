@@ -41,11 +41,11 @@ def get_status(client):
         return None
 
 
-    return json.loads(
-        file.read_text(
-            encoding="utf-8"
-        )
-    )
+    try:
+        status = json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return status if isinstance(status, dict) else None
 
 
 
@@ -59,4 +59,8 @@ def is_completed(client):
         return False
 
 
-    return status.get("status") == "PASS"
+    return status.get("status") == "PASS" and all(
+        (client / "website" / filename).is_file()
+        and (client / "website" / filename).stat().st_size > 0
+        for filename in ("index.html", "styles.css", "script.js")
+    )

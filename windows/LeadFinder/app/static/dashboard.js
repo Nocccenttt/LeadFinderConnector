@@ -12,7 +12,7 @@
   let rebuildKey = null;
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const providers = ['deepseek','google','pexels'];
-  let settingsToken = '', settingsEpoch = 0;
+  let settingsToken = '', settingsEpoch = 0, settingsSaving = false, searchPending = false;
   function keyMessage(id, message, kind = '') {
     $(id).textContent = message;
     $(id).className = `key-test-result ${kind}`;
@@ -21,10 +21,11 @@
     for (const provider of providers) {
       const saved = items[provider];
       $(`key-status-${provider}`).textContent = saved?.configured ? saved.ending ? `Saved key ending in ${saved.ending}` : 'Saved key configured' : 'No saved key';
-      $(`remove-${provider}`).disabled = !saved?.configured;
+      $(`remove-${provider}`).disabled = settingsSaving || !saved?.configured;
     }
   }
   async function openSettings() {
+    if (settingsSaving) return;
     if ($('find-dialog').open) $('find-dialog').close();
     const epoch = ++settingsEpoch;
     settingsToken = '';
@@ -44,6 +45,7 @@
   $('settings-button').addEventListener('click',openSettings);
   $('job-settings-button').addEventListener('click',openSettings);
   $('search-settings-button').addEventListener('click',openSettings);
+  $('settings-dialog').addEventListener('cancel',event=>{if(settingsSaving)event.preventDefault();});
   $('settings-dialog').addEventListener('close',()=>{
     settingsEpoch += 1; settingsToken = '';
     $('settings-form').reset();
@@ -71,14 +73,17 @@
   }
   $('settings-form').addEventListener('submit',async event=>{
     event.preventDefault();
-    if (!settingsToken) return;
-    const keys = {}, epoch = settingsEpoch;
+    if (!settingsToken || settingsSaving) return;
+    const keys = {};
     for (const provider of providers) {
       if ($(`remove-${provider}`).checked) keys[provider] = null;
       else if ($(`key-${provider}`).value.trim()) keys[provider] = $(`key-${provider}`).value.trim();
     }
     if (!Object.keys(keys).length) { keyMessage('settings-message','Enter a replacement key or choose Remove saved key.','error'); return; }
-    const controls = [...$('settings-form').querySelectorAll('input,button[type="submit"],[id^="test-"]')];
+    const epoch = ++settingsEpoch;
+    settingsSaving = true;
+    providers.forEach(provider => { keyMessage(`key-result-${provider}`,''); $(`test-${provider}`).textContent = 'Test'; });
+    const controls = [...$('settings-form').querySelectorAll('input,button')];
     controls.forEach(control => control.disabled = true);
     keyMessage('settings-message','Saving keys…');
     try {
@@ -89,9 +94,10 @@
         providers.forEach(provider => keyMessage(`key-result-${provider}`,''));
         keyMessage('settings-message',result.message,'success');
       }
-      await readSession(false); renderSelection();
+      await readSession(false).catch(() => setConnection(false)); renderSelection();
     } catch (error) { if (epoch === settingsEpoch) keyMessage('settings-message',error.message,'error'); }
     finally {
+      settingsSaving = false;
       if (epoch === settingsEpoch) {
         controls.forEach(control => control.disabled = false);
         providers.forEach(provider => { const remove = $(`remove-${provider}`); remove.disabled = $(`key-status-${provider}`).textContent === 'No saved key'; $(`key-${provider}`).disabled = remove.checked; $(`test-${provider}`).disabled = remove.checked; });
@@ -116,7 +122,7 @@
     state.connected = connected;
     $('connection').classList.toggle('connected', connected);
     $('connection').textContent = connected ? 'Workspace connected' : 'Connection interrupted';
-    renderDeletionControls();
+    renderDeletionControls(); renderWorkControls();
   }
   async function api(url, options = {}) {
     const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000);
@@ -133,6 +139,14 @@
   function workspaceError(message) {
     $('workspace-error-text').textContent = message;
     $('workspace-error').hidden = !message;
+  }
+  function websitesRunning() { return [...state.jobs.values()].some(running); }
+  function renderWorkControls() {
+    const searching = searchPending || running(state.search), building = websitesRunning();
+    $('find-button').disabled = searching || building;
+    $('search-submit').disabled = searching || building;
+    $('find-button').title = building ? 'Finish website builds before starting a business search.' : searching ? 'A business search is already running.' : '';
+    $('search-submit').title = building ? 'Finish website builds before starting a business search.' : '';
   }
   function compareLeads(a, b) {
     const score = lead => Number.isFinite(Number(lead.score)) ? Number(lead.score) : 0;
@@ -232,7 +246,7 @@
     }).sort(compareLeads);
   }
   function renderList() {
-    renderDeletionControls();
+    renderDeletionControls(); renderWorkControls();
     const list = $('business-list');
     const focusedKey = list.contains(document.activeElement) ? document.activeElement.dataset.key : null;
     list.replaceChildren();
@@ -325,7 +339,7 @@
     $('detail-panel').dataset.hasSelection = String(Boolean(lead));
     $('selection-empty').hidden = Boolean(lead); $('selected-workspace').hidden = !lead;
     if (!lead) { resetPreview(); return; }
-    const job = state.jobs.get(state.selected), busy = running(job);
+    const job = state.jobs.get(state.selected), busy = running(job), searching = searchPending || running(state.search);
     $('selected-name').textContent = lead.name || 'Unnamed business';
     $('selected-address').textContent = lead.address || 'No address recorded';
     const reason = Array.isArray(lead.reason) ? lead.reason.join(' · ') : String(lead.reason || '');
@@ -344,14 +358,15 @@
     $('website-state').textContent = busy ? 'Building website' : job?.status === 'error' || lead.preview_state === 'failed' ? 'Last build needs attention' : ready ? 'Preview ready' : 'Not built yet';
     const configured = state.capabilities.website_configured !== false;
     $('build-message').textContent = busy ? job.message || 'Researching, writing and building. This can take a few minutes.' :
+      searching ? 'Wait for the business search to finish before building or redesigning a website.' :
       !configured ? 'Website generation is not configured in this workspace.' : !lead.can_generate ? 'Website builds are available for high- and medium-priority businesses with a saved handoff.' :
       lead.preview_state === 'failed' ? lead.preview_message : job?.status === 'complete' ? 'Your website is ready to review and download.' : ready ? 'Redesign keeps the saved copy. Rebuild is available under more actions.' : 'Create a website to get a working preview and downloadable files.';
-    $('build-button').hidden = ready; $('build-button').disabled = busy || !lead.can_generate || !configured;
+    $('build-button').hidden = ready; $('build-button').disabled = busy || searching || !lead.can_generate || !configured;
     $('build-button').textContent = busy ? 'Building…' : 'Build website';
-    $('redesign-button').hidden = !ready || !lead.can_generate; $('redesign-button').disabled = busy || !configured;
+    $('redesign-button').hidden = !ready || !lead.can_generate; $('redesign-button').disabled = busy || searching || !configured;
     $('download-button').hidden = !ready; $('download-button').disabled = busy || lead.preview_state === 'failed';
     $('more-actions').hidden = !ready || !lead.can_generate || busy; $('more-actions').open = false;
-    $('rebuild-button').disabled = !configured;
+    $('rebuild-button').disabled = searching || !configured;
     $('job-error').hidden = job?.status !== 'error'; $('job-error').textContent = job?.status === 'error' ? job.message : '';
     $('job-settings-button').hidden = job?.status !== 'error' || !/api.key|401|authentication/i.test(job.message || '');
     $('open-preview').setAttribute('aria-disabled', String(!ready || busy));
@@ -395,25 +410,27 @@
       }
       const url = localPreviewURL(info.preview_url);
       url.searchParams.set('preview',String(Date.now()));
-      const response = await fetch(url, {cache:'no-store',signal:controller.signal});
+      const response = await fetch(url, {cache:'no-store',signal:AbortSignal.any([controller.signal,AbortSignal.timeout(15000)])});
       if (!response.ok) throw new Error(`The preview could not be opened (${response.status}). Try loading it again.`);
+      const html = await response.text();
       if (!current()) return;
+      const previewDocument = new DOMParser().parseFromString(html,'text/html');
+      if (!previewDocument.body?.textContent.trim()) throw new Error('The generated page is empty. Rebuild it to create a complete preview.');
       preview.url = info.preview_url;
-      const frame = $('preview-frame');
-      showPlaceholder('loading','Opening the website…','The preview will appear here in a moment.'); fitPreview();
+      const frame = node('iframe');
+      frame.id = 'preview-frame'; frame.title = 'Generated website preview';
+      frame.setAttribute('sandbox','allow-scripts');
+      showPlaceholder('loading','Opening the website…','The preview will appear here in a moment.');
       frame.onload = () => {
         if (!current()) return;
-        try {
-          if (frame.contentWindow.location.href === 'about:blank') return;
-          if (!frame.contentDocument?.body || !frame.contentDocument.body.textContent.trim()) throw new Error('The generated page is empty. Rebuild it to create a complete preview.');
-          clearTimeout(preview.timeout); preview.status = 'ready';
-          $('preview-placeholder').hidden = true; $('frame-stage').hidden = false;
-          $('preview-canvas').setAttribute('aria-busy','false'); fitPreview();
-        } catch (error) { clearTimeout(preview.timeout); showPlaceholder('error','Could not display the preview.',error.message); }
+        clearTimeout(preview.timeout); preview.status = 'ready';
+        $('preview-placeholder').hidden = true; $('frame-stage').hidden = false;
+        $('preview-canvas').setAttribute('aria-busy','false'); fitPreview();
       };
       frame.onerror = () => { if (current()) { clearTimeout(preview.timeout); showPlaceholder('error','Could not load the preview.','Try again, or open the website in a new tab.'); } };
       frame.src = url.href;
       preview.timeout = setTimeout(() => { if (current() && preview.status === 'loading') showPlaceholder('error','The preview is taking longer than expected.','Try loading it again, or open the website in a new tab.'); },15000);
+      $('preview-frame').replaceWith(frame); fitPreview();
     } catch (error) {
       if (current() && error.name !== 'AbortError') showPlaceholder('error','Could not load the preview.',error.message);
     }
@@ -431,13 +448,14 @@
   }
   function openSearch() {
     if (state.deleting) return;
-    if (running(state.search)) { $('search-progress').scrollIntoView({block:'start'}); return; }
+    if (searchPending || running(state.search)) { $('search-progress').scrollIntoView({block:'start'}); return; }
+    if (websitesRunning()) { workspaceError('Wait for website builds to finish before starting a business search.'); return; }
     $('search-form-error').hidden = true;
     $('find-dialog').showModal();
   }
   async function beginBuild(preserveContent) {
     const lead = selectedLead();
-    if (!lead || state.deleting || running(state.jobs.get(state.selected))) return;
+    if (!lead || state.deleting || searchPending || running(state.search) || running(state.jobs.get(state.selected))) return;
     const key = keyOf(lead), starting = {key,priority:lead.priority,client_id:lead.client_id,kind:'website',status:'starting',started_at:Date.now()/1000,message:'Starting the website build…'};
     state.jobs.set(key,starting); savePreferences(); renderList(); renderSelection();
     try {
@@ -454,22 +472,27 @@
   async function watchWebsite(job) {
     if (!job.job_id || watching.has(job.job_id)) return;
     watching.add(job.job_id);
+    const current = () => state.jobs.get(job.key)?.job_id === job.job_id;
     try {
-      while (state.jobs.get(job.key)?.job_id === job.job_id && running(state.jobs.get(job.key))) {
+      while (current() && running(state.jobs.get(job.key))) {
         try {
           const update = await api(`/landing-page-status?job_id=${encodeURIComponent(job.job_id)}`);
+          if (!current()) break;
           setConnection(true); Object.assign(job,update);
           state.jobs.set(job.key,job); savePreferences(); renderList();
           if (state.selected === job.key) renderSelection();
           if (!running(job)) {
             await loadLeads();
+            if (!current()) break;
             if (state.selected === job.key && job.status === 'complete' && selectedLead()) await loadPreview(selectedLead());
             $('announcement').textContent = job.status === 'complete' ? `Website ready for ${state.leads.find(lead => keyOf(lead) === job.key)?.name || 'your business'}.` : 'A website build needs attention.';
             break;
           }
         } catch (error) {
+          if (!current()) break;
           if (error.status === 404) {
             await loadLeads();
+            if (!current()) break;
             const lead = state.leads.find(item => keyOf(item) === job.key);
             if (lead?.demo_ready) state.jobs.delete(job.key);
             else state.jobs.set(job.key,{...job,status:'error',message:'This build session is no longer available. Your saved businesses are still here; you can start the build again.'});
@@ -492,20 +515,23 @@
     $('search-count').textContent = job.total ? `${job.current_index || 0} of ${job.total} businesses checked` : job.status === 'complete' ? 'Your saved businesses are updated.' : 'Preparing the search…';
     $('search-counts').textContent = `${job.high || 0} high · ${job.medium || 0} medium · ${job.low || 0} low`;
     $('search-again').hidden = running(job);
-    $('find-button').disabled = running(job); $('search-submit').disabled = running(job);
+    renderWorkControls(); renderSelection();
     $('activity-log').replaceChildren(...(job.log || []).map(line => node('div',`activity-line ${line.type === 'error' ? 'error' : ''}`,line.text)));
   }
   async function watchSearch(job) {
     if (!job?.job_id || watching.has(job.job_id)) return;
     watching.add(job.job_id);
+    const current = () => state.search?.job_id === job.job_id;
     try {
-      while (state.search?.job_id === job.job_id && running(state.search)) {
+      while (current() && running(state.search)) {
         try {
           const update = await api(`/job-status?job_id=${encodeURIComponent(job.job_id)}`);
+          if (!current()) break;
           setConnection(true); Object.assign(job,update); state.search = job; savePreferences(); renderSearch(job);
           if (!running(job)) { await loadLeads(); break; }
         } catch (error) {
-          if (error.status === 404) { job.status = 'error'; job.message = 'This search session has ended. Refresh your saved businesses, or start another search.'; renderSearch(job); savePreferences(); await loadLeads(); break; }
+          if (!current()) break;
+          if (error.status === 404) { state.search = job; job.status = 'error'; job.message = 'This search session has ended. Refresh your saved businesses, or start another search.'; renderSearch(job); savePreferences(); await loadLeads(); break; }
           setConnection(false); job.message = 'Connection interrupted. The search may still be running; reconnecting…'; renderSearch(job);
         }
         await sleep(state.connected ? 1000 : 3000);
@@ -541,15 +567,25 @@
   $('find-form').addEventListener('submit',async event => {
     event.preventDefault();
     const niche = $('niche').value.trim(), area = $('area').value.trim();
-    if (!niche || !area || state.deleting || running(state.search)) return;
-    $('search-submit').disabled = true; $('search-form-error').hidden = true;
+    if (!niche || !area || state.deleting || searchPending || running(state.search) || websitesRunning()) return;
+    const starting = {kind:'leads',status:'starting',started_at:Date.now()/1000,message:`Starting the search for ${niche} in ${area}…`};
+    searchPending = true; state.search = starting;
+    savePreferences(); renderSearch(starting); $('search-form-error').hidden = true;
     try {
       const result = await api('/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({niche,area,max_results:Number($('max-results').value)})});
-      const job = {job_id:result.job_id,kind:'leads',status:'queued',started_at:Date.now()/1000,message:`Searching for ${niche} in ${area}…`};
+      const job = {...starting,job_id:result.job_id,status:'queued',message:`Searching for ${niche} in ${area}…`};
       state.search = job; savePreferences(); $('find-dialog').close(); renderSearch(job); watchSearch(job);
     } catch (error) {
-      $('search-form-error').textContent = error.message; $('search-form-error').hidden = false;
-      $('search-submit').disabled = false;
+      await readSession(false).catch(() => {});
+      if (state.search?.job_id && running(state.search)) {
+        $('find-dialog').close(); renderSearch(state.search);
+      } else {
+        state.search = {...starting,status:'error',message:error.message};
+        savePreferences(); renderSearch(state.search);
+        $('search-form-error').textContent = error.message; $('search-form-error').hidden = false;
+      }
+    } finally {
+      searchPending = false; renderWorkControls(); renderSelection();
     }
   });
   document.querySelectorAll('[data-priority]').forEach(button => button.addEventListener('click',()=>{state.priority = button.dataset.priority;renderList();}));

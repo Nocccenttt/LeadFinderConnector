@@ -7,11 +7,10 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from api_usage_logger import log_usage
+from deepseek_response import MODEL, completion_text
 
 
 load_dotenv()
-
-MODEL = "deepseek-chat"
 
 SYSTEM_PROMPT = """
 You are Wolf Forge's senior website designer and conversion copywriter.
@@ -342,6 +341,7 @@ def generate_website(handoff_path):
         ],
         temperature=0.6,
         max_tokens=4500,
+        extra_body={"thinking": {"type": "disabled"}},
     )
 
     print("\nDeepSeek Usage:")
@@ -357,7 +357,7 @@ def generate_website(handoff_path):
             f"Usage logging skipped: {error}"
         )
 
-    content = response.choices[0].message.content or ""
+    content = completion_text(response)
 
     html = extract_html(content)
 
