@@ -45,10 +45,10 @@ def build_package(client_folder):
 
         for file in source_website.iterdir():
 
-            shutil.copy(
-                file,
-                website / file.name
-            )
+            if file.is_dir():
+                shutil.copytree(file, website / file.name, dirs_exist_ok=True)
+            else:
+                shutil.copy(file, website / file.name)
 
 
     # Copy data files

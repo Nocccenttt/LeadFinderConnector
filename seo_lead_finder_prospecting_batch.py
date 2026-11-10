@@ -16,6 +16,7 @@ import argparse
 import csv
 import os
 import json
+import hashlib
 import random
 import re
 import time
@@ -25,6 +26,8 @@ from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
+
+from ai_handoff import build_ai_handoff
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
@@ -81,31 +84,71 @@ def fetch(url, timeout=10):
 
 
 def google_places_search(niche, area, api_key, max_results):
-    """Find businesses through Google Places Text Search, not Maps HTML scraping."""
+    """Find up to max_results businesses using Google Places Text Search pagination."""
     endpoint = "https://places.googleapis.com/v1/places:searchText"
     request_headers = {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": api_key,
-        "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri",
+        "X-Goog-FieldMask": (
+            "places.displayName,places.formattedAddress,"
+            "places.nationalPhoneNumber,places.websiteUri,nextPageToken"
+        ),
     }
-    print(f"[search] Connecting to Google Places...", flush=True)
-    response = requests.post(
-        endpoint,
-        headers=request_headers,
-        json={"textQuery": f"{niche} in {area}", "pageSize": min(max_results, 20)},
-        timeout=20,
-    )
-    print("[search] Google Places response received.", flush=True)
-    response.raise_for_status()
+    target_count = max(0, int(max_results))
+    if target_count == 0:
+        return []
+
+    print("[search] Connecting to Google Places...", flush=True)
     leads = []
-    for position, place in enumerate(response.json().get("places", []), 1):
-        leads.append(Lead(
-            maps_position=position,
-            name=place.get("displayName", {}).get("text", ""),
-            address=place.get("formattedAddress", ""),
-            phone=place.get("nationalPhoneNumber", ""),
-            website=place.get("websiteUri", ""),
-        ))
+    page_token = None
+    seen_tokens = set()
+    seen = set()
+
+    while len(leads) < target_count:
+        payload = {
+            "textQuery": f"{niche} in {area}",
+            "pageSize": min(target_count - len(leads), 20),
+        }
+        if page_token:
+            payload["pageToken"] = page_token
+
+        response = requests.post(
+            endpoint,
+            headers=request_headers,
+            json=payload,
+            timeout=20,
+        )
+        response.raise_for_status()
+        page = response.json()
+        places = page.get("places", [])
+        print(
+            f"[search] Received {len(places)} place(s); "
+            f"{len(leads) + len(places)} collected so far.",
+            flush=True,
+        )
+
+        for place in places:
+            name = place.get("displayName", {}).get("text", "").strip()
+            address = place.get("formattedAddress", "").strip()
+            dedupe_key = (name.casefold(), address.casefold())
+            if not name or dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            leads.append(Lead(
+                maps_position=len(leads) + 1,
+                name=name,
+                address=address,
+                phone=place.get("nationalPhoneNumber", ""),
+                website=place.get("websiteUri", ""),
+            ))
+            if len(leads) >= target_count:
+                break
+
+        page_token = page.get("nextPageToken")
+        if not page_token or not places or page_token in seen_tokens:
+            break
+        seen_tokens.add(page_token)
+
     return leads
 
 
@@ -119,14 +162,15 @@ def inspect_website(website):
         result["status"] = "no website"
         return result
 
-    parsed = urlparse(website)
-    root = f"{parsed.scheme}://{parsed.netloc}"
-    homepage = fetch(root)
+    root = website
+    homepage = fetch(website)
     if not homepage or homepage.status_code >= 400:
         result["status"] = "broken"
         return result
 
     result["status"] = "working"
+    # Analyze the supplied landing page, including path-based business listings.
+    root = homepage.url if isinstance(homepage.url, str) and homepage.url else root
     checked_urls = set()
 
     for path in CONTACT_PATHS:
@@ -134,7 +178,7 @@ def inspect_website(website):
         if page_url in checked_urls:
             continue
         checked_urls.add(page_url)
-        response = fetch(page_url)
+        response = homepage if not path else fetch(page_url)
         if not response or response.status_code >= 400:
             continue
 
@@ -227,17 +271,29 @@ def safe_filename(value):
     """Turn niche/area text into a Windows-safe filename."""
     value = re.sub(r'[<>:"/\\|?*]+', "-", value)
     value = re.sub(r"\s+", " ", value).strip()
-    return value[:150].rstrip(" .")
+    value = value[:150].rstrip(" .") or "business"
+    if re.fullmatch(r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?", value, re.I):
+        value = "_" + value
+    return value
 
 
-def write_codex_handoff(lead, base_dir):
+def write_codex_handoff(lead, base_dir, niche="local business"):
     """Create a priority-folder handoff for one lead."""
     priority = lead.opportunity.upper()
     business_dir = Path(base_dir) / priority / safe_filename(lead.name)
+    existing_file = business_dir / "business.json"
+    if existing_file.exists():
+        existing = json.loads(existing_file.read_text(encoding="utf-8"))
+        if (existing.get("business_name"), existing.get("address", "")) != (lead.name, lead.address):
+            identity = f"{lead.name.casefold()}|{lead.address.casefold()}"
+            suffix = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+            business_dir = business_dir.with_name(f"{business_dir.name}-{suffix}")
     business_dir.mkdir(parents=True, exist_ok=True)
 
     data = {
         "business_name": lead.name,
+        "business_type": niche,
+        "niche": niche,
         "opportunity": lead.opportunity,
         "opportunity_score": lead.opportunity_score,
         "opportunity_reasons": lead.reason,
@@ -317,6 +373,7 @@ This folder is ready to hand off to the website generator.
 5. Score: {lead.opportunity_score}/100
 """
     (business_dir / "README.md").write_text(readme, encoding="utf-8")
+    return business_dir
 
 
 def write_opportunity_csv(leads, path, priority):
@@ -345,7 +402,7 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
 
     progress(
         phase="Searching",
-        subphase=f"{niche} • {area}",
+        subphase=f"{niche} | {area}",
         current_business="",
         current_index=0,
         total=0,
@@ -355,7 +412,7 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
         low=0,
         message="Searching Google Places...",
         log_type="work",
-        log="● Searching Google Places...",
+        log="* Searching Google Places...",
     )
 
     # If the user leaves --output at its default, create a descriptive
@@ -370,7 +427,7 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
         output = str(output_dir / output)
     api_key = os.getenv("GOOGLE_MAPS_API_KEY")
     if not api_key:
-        raise SystemExit("ERROR: GOOGLE_MAPS_API_KEY is not set.")
+        raise RuntimeError("GOOGLE_MAPS_API_KEY is not set.")
 
     print(f"[info] Searching Google Places: {niche} in {area}")
     leads = google_places_search(niche, area, api_key, max_results)
@@ -381,7 +438,7 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
     print(f"[progress] Found {len(leads)} businesses. Starting website checks...", flush=True)
     progress(
         phase="Website analysis",
-        subphase=f"{niche} • {area}",
+        subphase=f"{niche} | {area}",
         current_business="",
         current_index=0,
         total=len(leads),
@@ -391,7 +448,7 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
         low=0,
         message=f"Found {len(leads)} businesses. Starting website checks...",
         log_type="ok",
-        log=f"✓ Found {len(leads)} businesses.",
+        log=f"[ok] Found {len(leads)} businesses.",
     )
     for number, lead in enumerate(leads, 1):
         print("", flush=True)
@@ -411,7 +468,7 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
         low_count = sum(x.opportunity == "LOW" for x in leads[:number])
         progress(
             phase="Website analysis",
-            subphase=f"{niche} • {area}",
+            subphase=f"{niche} | {area}",
             current_business=lead.name,
             current_index=number,
             total=len(leads),
@@ -419,9 +476,9 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
             high=high_count,
             medium=medium_count,
             low=low_count,
-            message=f"{lead.website_status.title()} • {lead.opportunity_score}/100 • {lead.opportunity}",
+            message=f"{lead.website_status.title()} | {lead.opportunity_score}/100 | {lead.opportunity}",
             log_type="ok",
-            log=f"✓ {lead.name} — {lead.opportunity} — {lead.opportunity_score}/100",
+            log=f"[ok] {lead.name} - {lead.opportunity} - {lead.opportunity_score}/100",
         )
         time.sleep(random.uniform(0.2, 0.5))
 
@@ -459,11 +516,14 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
             low=len(low_leads),
             message=f"Preparing {len(bucket)} {priority} priority records...",
             log_type="work",
-            log=f"● Preparing {len(bucket)} {priority} handoffs...",
+            log=f"* Preparing {len(bucket)} {priority} handoffs...",
         )
         for lead in bucket:
             print(f"       [handoff] {priority}: {lead.name}", flush=True)
-            write_codex_handoff(lead, codex_dir)
+            business_dir = write_codex_handoff(lead, codex_dir, niche)
+            if priority in ("HIGH", "MEDIUM"):
+                handoff_path = build_ai_handoff(business_dir / "business.json")
+                print(f"       [handoff] AI handoff ready: {handoff_path}", flush=True)
 
     for priority, bucket in (("HIGH", high_leads), ("MEDIUM", medium_leads), ("LOW", low_leads)):
         write_opportunity_csv(
@@ -489,7 +549,7 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
             ])
     progress(
         phase="Complete",
-        subphase=f"{niche} • {area}",
+        subphase=f"{niche} | {area}",
         current_business="",
         current_index=len(leads),
         total=len(leads),
@@ -499,7 +559,7 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
         low=len(low_leads),
         message=f"Lead generation complete. {len(leads)} leads ready.",
         log_type="ok",
-        log=f"✓ Saved {len(leads)} leads.",
+        log=f"[ok] Saved {len(leads)} leads.",
     )
     print(f"[done] Wrote {len(leads)} leads to {output}")
     print(f"[batch] {output}")
@@ -513,7 +573,7 @@ def main():
     parser.add_argument("--max-results", type=int, default=20)
     parser.add_argument("--output-dir", default=".")
     args = parser.parse_args()
-    run(args.niche, args.area, args.output, args.max_results)
+    run(args.niche, args.area, args.output, args.max_results, output_dir=args.output_dir)
 
 
 if __name__ == "__main__":

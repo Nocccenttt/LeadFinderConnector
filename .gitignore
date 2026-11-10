@@ -13,6 +13,9 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.venv/
+.installed.json
+.playwright-cli/
 
 
 # ==========================
