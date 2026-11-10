@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#07111f">
-  <title>LeadFinder — Workspace</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%2307111f'/%3E%3Ctext x='7' y='27' fill='%23d6b56e' font-family='Arial' font-size='20'%3ELF%3C/text%3E%3C/svg%3E">
+  <title>Wolf Forge LeadFinder</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%2307111f'/%3E%3Ctext x='7' y='27' fill='%23d6b56e' font-family='Arial' font-size='20'%3EWF%3C/text%3E%3C/svg%3E">
   <link rel="preload" href="{{ url_for('dashboard_font') }}" as="font" type="font/ttf" crossorigin>
   <link rel="stylesheet" href="{{ url_for('static',filename='dashboard.css') }}">
   <script src="{{ url_for('static',filename='dashboard.js') }}" defer></script>
@@ -13,11 +13,11 @@
 <body data-input="keyboard">
 <a class="skip-link" href="#workspace">Skip to workspace</a>
 <header class="app-header">
-  <a class="brand" href="/" aria-label="LeadFinder workspace"><span class="brand-mark" aria-hidden="true">LF</span><span>LeadFinder<span class="brand-divider" aria-hidden="true">/</span><span class="brand-context">Workspace</span></span></a>
+  <a class="brand" href="/" aria-label="Wolf Forge LeadFinder workspace"><span class="brand-mark" aria-hidden="true">WF</span><span class="brand-copy"><span class="brand-company">Wolf Forge</span><span class="brand-divider" aria-hidden="true">/</span><span class="brand-context">LeadFinder</span></span></a>
   <div class="header-right"><span id="connection" class="connection">Connecting…</span><button class="button settings-trigger" id="settings-button" aria-label="API keys" title="API keys"><span aria-hidden="true">⚙</span><span class="settings-label">API keys</span></button><button class="button quiet" id="export-button" title="Export all saved businesses as CSV">Export CSV <span aria-hidden="true">↗</span></button><button class="button primary" id="find-button"><span aria-hidden="true">+</span> Find businesses</button></div>
 </header>
 <main class="app-shell" id="workspace">
-  <div class="page-heading"><div><p class="eyebrow">YOUR WORKSPACE</p><h1>Businesses, with a next step.</h1><p class="page-description">Find a business. Build its website. See the result here.</p></div><span class="saved-count" id="saved-count">Loading saved businesses…</span></div>
+  <div class="page-heading"><div><p class="eyebrow">WOLF FORGE · LEAD INTELLIGENCE</p><h1>Businesses, with a next step.</h1><p class="page-description">Find a business. Build its website. See the result here.</p></div><span class="saved-count" id="saved-count">Loading saved businesses…</span></div>
   <div id="workspace-error" class="notice error" role="alert" hidden><span id="workspace-error-text"></span><button class="button compact" id="retry-workspace">Retry</button></div>
   <div id="workspace-status" class="notice success" role="status" hidden><span id="workspace-status-text"></span><button class="button compact" id="dismiss-workspace-status" aria-label="Dismiss list update">Dismiss</button></div>
   <section class="search-progress" id="search-progress" aria-label="Business search progress" hidden>
