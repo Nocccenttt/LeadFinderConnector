@@ -333,6 +333,46 @@
       if (epoch === leadLoadEpoch) { state.loadingLeads = false; $('refresh-button').disabled = false; renderDeletionControls(); }
     }
   }
+  function renderQuality(lead, busy) {
+    const qa = lead?.qa && typeof lead.qa === 'object' ? lead.qa : {};
+    const status = String(qa.status || 'NOT RUN').toUpperCase();
+    const total = Number(qa.checks_total || 0), passed = Number(qa.checks_passed || 0);
+    const issues = Array.isArray(qa.issues) ? qa.issues.filter(Boolean).slice(0,5) : [];
+    const ready = Boolean(lead?.demo_ready) && status === 'PASS';
+    const failed = status === 'FAILED' || status === 'NEEDS REVIEW' || lead?.preview_state === 'failed';
+
+    $('qa-card').classList.toggle('ready', ready);
+    $('qa-card').classList.toggle('attention', failed);
+    $('qa-title').textContent = busy ? 'Quality check pending' : ready ? 'Ready to review' : failed ? 'Needs attention' : lead?.demo_ready ? 'Quality check unavailable' : 'Not checked yet';
+    $('qa-badge').className = `qa-badge ${ready ? 'ready' : failed ? 'attention' : ''}`;
+    $('qa-badge').textContent = busy ? 'Building' : ready ? 'Passed' : failed ? 'Review' : 'Pending';
+    $('qa-summary').textContent = busy ? 'LeadFinder will run the website checks after the build finishes.' :
+      total ? `${passed} of ${total} quality checks passed.` :
+      lead?.demo_ready ? 'The website files are available, but no quality report was found.' :
+      'Build a website to run the quality checks.';
+
+    const issueBox = $('qa-issues');
+    issueBox.replaceChildren();
+    issueBox.hidden = !issues.length;
+    if (issues.length) {
+      issueBox.append(node('span','qa-issues-label','Check these items'));
+      const list = node('ul','qa-issues-list');
+      for (const issue of issues) list.append(node('li','',issue));
+      issueBox.append(list);
+    }
+
+    const steps = {
+      build: busy || lead?.demo_ready,
+      qa: busy || status !== 'NOT RUN',
+      ready,
+    };
+    for (const [name, complete] of Object.entries(steps)) {
+      const element = $(`step-${name}`);
+      element.classList.toggle('complete', Boolean(complete));
+      element.classList.toggle('active', name === 'build' ? busy : name === 'qa' ? !busy && failed : name === 'ready' ? ready : false);
+    }
+  }
+
   function renderSelection(forcePreview = false) {
     const lead = selectedLead();
     renderDeletionControls();
@@ -340,11 +380,12 @@
     $('selection-empty').hidden = Boolean(lead); $('selected-workspace').hidden = !lead;
     if (!lead) { resetPreview(); return; }
     const job = state.jobs.get(state.selected), busy = running(job), searching = searchPending || running(state.search);
+    $('selected-category').textContent = lead.category || 'Local business';
     $('selected-name').textContent = lead.name || 'Unnamed business';
     $('selected-address').textContent = lead.address || 'No address recorded';
     const reason = Array.isArray(lead.reason) ? lead.reason.join(' · ') : String(lead.reason || '');
-    $('selected-reason').textContent = reason ? `Opportunity: ${reason}` : '';
-    $('selected-reason').hidden = !reason;
+    $('selected-reason').textContent = reason;
+    $('selected-reason-card').hidden = !reason;
     $('selected-priority').className = `priority-label ${lead.priority.toLowerCase()}`;
     $('selected-priority').textContent = lead.priority[0] + lead.priority.slice(1).toLowerCase() + ' priority';
     $('selected-score').textContent = lead.score ? `Opportunity score ${lead.score}` : '';
@@ -372,6 +413,7 @@
     $('open-preview').setAttribute('aria-disabled', String(!ready || busy));
     if (ready) $('open-preview').href = lead.demo_url; else $('open-preview').removeAttribute('href');
     $('retry-preview').disabled = !ready || busy;
+    renderQuality(lead, busy);
     document.querySelectorAll('[data-device]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.device === state.device)));
     if (forcePreview || preview.key !== state.selected || (ready && preview.url !== lead.demo_url && preview.status !== 'loading')) loadPreview(lead);
   }
@@ -404,6 +446,7 @@
     try {
       const info = await api(`/preview-status?priority=${encodeURIComponent(lead.priority)}&name=${encodeURIComponent(lead.client_id)}`, {signal:controller.signal});
       if (!current()) return;
+      if (info.qa) { lead.qa = info.qa; renderQuality(lead, running(state.jobs.get(state.selected))); }
       if (!info.available) {
         showPlaceholder('empty',info.state === 'missing' ? 'No website yet.' : 'This website needs a new build.',info.message || 'Build a website to see a complete preview here.');
         return;
@@ -562,6 +605,7 @@
     return session;
   }
   $('find-button').addEventListener('click',openSearch);
+  $('empty-find-button').addEventListener('click',openSearch);
   $('search-again').addEventListener('click',openSearch);
   document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click',() => $(button.dataset.close).close()));
   $('find-form').addEventListener('submit',async event => {
