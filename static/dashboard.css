@@ -2094,3 +2094,112 @@ select {
     margin-right:18px;
   }
 }
+
+
+/* Lightweight lead workflow */
+.lead-workflow-card {
+  margin:0;
+  padding:20px 28px;
+  border-top:1px solid #213249;
+  background:#0c1828;
+}
+.lead-workflow-heading {
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+  margin-bottom:16px;
+}
+.lead-workflow-heading h3 {
+  margin-top:4px;
+  font-size:16px;
+  font-weight:600;
+  letter-spacing:-.025em;
+}
+.workflow-save-state {
+  min-height:20px;
+  color:#9fd2af;
+  font-size:11px;
+  line-height:1.5;
+  text-align:right;
+}
+.lead-workflow-grid {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:12px;
+}
+.workflow-field {
+  display:flex;
+  flex-direction:column;
+  gap:7px;
+  color:#9aa8ba;
+  font-size:11px;
+  font-weight:550;
+}
+.workflow-field select,
+.workflow-field input,
+.workflow-field textarea {
+  width:100%;
+  color:#f5f1e8;
+  background:#091522;
+  border:1px solid #26384d;
+  border-radius:8px;
+  padding:10px 11px;
+}
+.workflow-field textarea {
+  min-height:86px;
+  resize:vertical;
+  line-height:1.55;
+}
+.workflow-notes {
+  margin-top:12px;
+}
+.lead-workflow-footer {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  margin-top:10px;
+}
+.notes-count {
+  color:#718096;
+  font-size:10px;
+  font-variant-numeric:tabular-nums;
+}
+.workflow-chip {
+  display:inline-flex;
+  align-items:center;
+  min-height:22px;
+  padding:3px 7px;
+  border:1px solid #31465e;
+  border-radius:999px;
+  background:#132237;
+  color:#9eacbe;
+  font-size:10px;
+  font-weight:600;
+  white-space:nowrap;
+}
+.workflow-contacted,
+.workflow-follow_up {
+  border-color:#66542f;
+  background:#241f16;
+  color:#d6bb7b;
+}
+.workflow-interested {
+  border-color:#315844;
+  background:#10261c;
+  color:#9fd2af;
+}
+.workflow-closed {
+  border-color:#3c4653;
+  background:#141a22;
+  color:#7d8998;
+}
+@media(max-width:800px) {
+  .lead-workflow-card {
+    padding:18px;
+  }
+  .lead-workflow-grid {
+    grid-template-columns:1fr;
+  }
+}
