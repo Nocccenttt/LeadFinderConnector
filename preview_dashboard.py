@@ -7,6 +7,7 @@ from io import BytesIO, StringIO
 from pathlib import Path
 from threading import Lock, Thread
 from time import time
+from datetime import date
 from uuid import uuid4
 from urllib.parse import urlparse
 
@@ -105,6 +106,33 @@ def preview_info(folder):
         "download_url": url_for("download_demo_named", priority=folder.parent.name, name=folder.name) if available else "",
     }
 
+WORKFLOW_STATUSES = ("NEW", "CONTACTED", "FOLLOW_UP", "INTERESTED", "CLOSED")
+
+
+def read_lead_workflow(folder):
+    workflow = {"status": "NEW", "notes": "", "follow_up_date": ""}
+    try:
+        saved = json.loads((folder / "lead_workflow.json").read_text(encoding="utf-8"))
+        if isinstance(saved, dict):
+            status = str(saved.get("status") or "NEW").upper()
+            workflow["status"] = status if status in WORKFLOW_STATUSES else "NEW"
+            workflow["notes"] = str(saved.get("notes") or "")[:5000]
+            follow_up = str(saved.get("follow_up_date") or "")
+            if follow_up:
+                date.fromisoformat(follow_up)
+                workflow["follow_up_date"] = follow_up
+    except (OSError, ValueError, TypeError):
+        pass
+    return workflow
+
+
+def write_lead_workflow(folder, workflow):
+    output = folder / "lead_workflow.json"
+    temporary = folder / ".lead_workflow.tmp"
+    temporary.write_text(json.dumps(workflow, indent=2, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(output)
+
+
 def discover_leads():
     leads = []
     for priority in ("HIGH", "MEDIUM", "LOW"):
@@ -129,6 +157,7 @@ def discover_leads():
             except Exception:
                 continue
             preview = preview_info(client_folder)
+            workflow = read_lead_workflow(client_folder)
             ready = preview["available"]
             leads.append({
                 "client_id": client_folder.name,
@@ -144,6 +173,7 @@ def discover_leads():
                 "preview_state":preview["state"],
                 "preview_message":preview["message"],
                 "qa": preview["qa"],
+                "workflow": workflow,
                 "folder": str(client_folder.relative_to(ROOT)),
                 "demo_ready": ready,
                 "demo_url": url_for("demo_named", priority=priority, name=client_folder.name) if ready else "",
@@ -355,6 +385,43 @@ def leads():
         "total": len(items),
         "leads": items,
     })
+
+
+@app.post("/lead-workflow")
+def save_lead_workflow():
+    if urlparse(request.host_url).hostname not in ('localhost', '127.0.0.1', '::1'):
+        return jsonify({'error': 'Open the local LeadFinder app to update a lead.'}), 403
+    if not secrets.compare_digest(request.headers.get('X-Workspace-Token', '').encode('utf-8'), settings_token.encode('utf-8')):
+        return jsonify({'error': 'Refresh the workspace before updating this lead.'}), 403
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'Expected lead workflow details.'}), 400
+    folder = resolve_lead_folder(data.get('priority'), data.get('name'))
+    if folder is None or not (folder / 'business.json').is_file():
+        return jsonify({'error': 'This business is no longer available. Refresh the list.'}), 404
+    status = str(data.get('status') or 'NEW').upper()
+    if status not in WORKFLOW_STATUSES:
+        return jsonify({'error': 'Choose a valid lead status.'}), 400
+    notes = data.get('notes', '')
+    if not isinstance(notes, str) or len(notes) > 5000:
+        return jsonify({'error': 'Keep notes within 5,000 characters.'}), 400
+    follow_up = data.get('follow_up_date', '')
+    if follow_up is None:
+        follow_up = ''
+    if not isinstance(follow_up, str):
+        return jsonify({'error': 'Choose a valid follow-up date.'}), 400
+    follow_up = follow_up.strip()
+    if follow_up:
+        try:
+            date.fromisoformat(follow_up)
+        except ValueError:
+            return jsonify({'error': 'Choose a valid follow-up date.'}), 400
+    workflow = {'status': status, 'notes': notes.strip(), 'follow_up_date': follow_up}
+    try:
+        write_lead_workflow(folder, workflow)
+    except OSError:
+        return jsonify({'error': 'Could not save this lead workflow. Check folder permissions and try again.'}), 500
+    return jsonify({'workflow': workflow, 'message': 'Lead workflow saved.'})
 
 
 @app.post("/delete-leads")
