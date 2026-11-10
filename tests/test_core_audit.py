@@ -15,7 +15,6 @@ import batch_logger
 import batch_pipeline
 import pipeline_runner
 import deepseek_website_generator as legacy_generator
-import deepseek_website_generator_backup as html_generator
 import reference_website_generator as generator
 import seo_lead_finder_prospecting_batch as finder
 from ai_handoff import build_ai_handoff
@@ -221,7 +220,6 @@ class CoreAuditTests(unittest.TestCase):
         for module, invoke in (
             (generator, lambda: generator.generate_copy({'business_name': 'Example'}, {})),
             (legacy_generator, lambda: legacy_generator.generate_copy({'business_name': 'Example'}, {})),
-            (html_generator, lambda: html_generator.generate_website(handoff)),
         ):
             with self.subTest(generator=module.__name__):
                 client = Mock()
