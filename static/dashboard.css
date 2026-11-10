@@ -1612,3 +1612,77 @@ select {
     font-size:9px;
   }
 }
+
+
+/* Expanded premium Wolf Forge masthead */
+.app-header {
+  min-height:104px;
+  height:auto;
+  padding:18px 34px;
+  align-items:center;
+}
+.header-brand-area {
+  display:flex;
+  align-items:center;
+  gap:24px;
+  min-width:0;
+}
+.brand {
+  gap:16px;
+  min-width:0;
+}
+.brand-emblem {
+  width:58px;
+  height:58px;
+  flex:0 0 58px;
+}
+.brand-lockup {
+  gap:3px;
+}
+.brand-company {
+  font-size:20px;
+  line-height:1;
+  font-weight:700;
+  letter-spacing:-.02em;
+}
+.brand-product {
+  font-size:11px;
+  line-height:1.1;
+  letter-spacing:.2em;
+}
+.brand-tagline {
+  padding-left:24px;
+  border-left:1px solid #3a4b60;
+  color:#8795a8;
+  font-size:12px;
+  line-height:1.4;
+  white-space:nowrap;
+}
+.header-right {
+  margin-left:auto;
+}
+@media(max-width:980px) {
+  .brand-tagline {
+    display:none;
+  }
+}
+@media(max-width:800px) {
+  .app-header {
+    min-height:88px;
+    padding:14px 18px;
+  }
+  .brand-emblem {
+    width:48px;
+    height:48px;
+    flex-basis:48px;
+  }
+  .brand-company {
+    font-size:17px;
+  }
+  .brand-product {
+    font-size:9px;
+  }
+  .header-right {
+    gap:8px;
+  }
+}
