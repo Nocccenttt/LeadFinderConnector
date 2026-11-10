@@ -202,10 +202,13 @@
       state.loadingLeads ? 'Wait for the business list to finish refreshing.' :
       running(state.search) ? 'Wait for the business search to finish before deleting businesses.' :
       !state.leads.length ? 'There are no businesses to remove.' : '';
-    const clearSummary = $('clear-list-button');
-    clearSummary.setAttribute('aria-disabled', String(Boolean(clearReason)));
-    clearSummary.title = clearReason || 'Choose High, Medium, Low, or All.';
-    $('clear-menu').classList.toggle('disabled', Boolean(clearReason));
+    const clearButton = $('clear-list-button');
+    clearButton.disabled = Boolean(clearReason);
+    clearButton.title = clearReason || 'Choose High, Medium, Low, or All.';
+    if (clearReason) {
+      $('clear-menu-panel').hidden = true;
+      clearButton.setAttribute('aria-expanded','false');
+    }
 
     document.querySelectorAll('[data-clear-priority]').forEach(button => {
       const priority = button.dataset.clearPriority;
@@ -235,7 +238,8 @@
       ? `Remove ${leads.length} ${scope === 'ALL' ? '' : label + '-priority '}${leads.length === 1 ? 'business' : 'businesses'} from this workspace? Businesses outside this group will be kept. Saved files will remain in the deleted-leads archive.`
       : `Remove ${leads[0].name || 'this business'} from your saved list?`;
     $('delete-error').hidden = true;
-    $('clear-menu').open = false;
+    $('clear-menu-panel').hidden = true;
+    $('clear-list-button').setAttribute('aria-expanded','false');
     renderDeletionControls();
     $('delete-dialog').showModal();
   }
@@ -704,7 +708,18 @@
   $('lead-sort').addEventListener('change',()=>{state.sort = sortModes.includes($('lead-sort').value) ? $('lead-sort').value : 'priority';savePreferences();renderList();});
   $('delete-business-button').addEventListener('click',()=>openDeleteScope());
   document.querySelectorAll('[data-clear-priority]').forEach(button => button.addEventListener('click',()=>openDeleteScope(button.dataset.clearPriority)));
-  $('clear-list-button').addEventListener('click',event=>{ if ($('clear-menu').classList.contains('disabled')) { event.preventDefault(); $('clear-menu').open = false; } });
+  $('clear-list-button').addEventListener('click',()=>{
+    if ($('clear-list-button').disabled) return;
+    const panel = $('clear-menu-panel');
+    panel.hidden = !panel.hidden;
+    $('clear-list-button').setAttribute('aria-expanded',String(!panel.hidden));
+  });
+  document.addEventListener('click',event=>{
+    if (!$('clear-menu').contains(event.target)) {
+      $('clear-menu-panel').hidden = true;
+      $('clear-list-button').setAttribute('aria-expanded','false');
+    }
+  });
   $('confirm-delete').addEventListener('click',deleteBusinesses);
   $('delete-dialog').addEventListener('cancel',event=>{if(state.deleting)event.preventDefault();});
   $('delete-dialog').addEventListener('close',()=>{pendingDelete = null;});
