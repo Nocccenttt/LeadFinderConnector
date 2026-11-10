@@ -2236,3 +2236,54 @@ textarea {
     max-width:none;
   }
 }
+
+
+/* Priority-scoped clear menu */
+.clear-menu {
+  position:relative;
+}
+.clear-menu > summary {
+  list-style:none;
+}
+.clear-menu > summary::-webkit-details-marker {
+  display:none;
+}
+.clear-menu.disabled > summary {
+  opacity:.45;
+  cursor:not-allowed;
+}
+.clear-menu-panel {
+  position:absolute;
+  top:calc(100% + 8px);
+  right:0;
+  z-index:30;
+  width:180px;
+  padding:6px;
+  border:1px solid #2a3d53;
+  border-radius:10px;
+  background:#0d1a2a;
+  box-shadow:0 20px 50px #00000055;
+}
+.clear-menu-panel button {
+  width:100%;
+  min-height:36px;
+  padding:8px 10px;
+  border:0;
+  border-radius:7px;
+  background:transparent;
+  color:#d7dee8;
+  text-align:left;
+  font-size:12px;
+}
+.clear-menu-panel button:hover:not(:disabled) {
+  background:#14253a;
+}
+.clear-menu-panel button:disabled {
+  opacity:.4;
+  cursor:not-allowed;
+}
+.clear-menu-separator {
+  height:1px;
+  margin:5px 4px;
+  background:#24364b;
+}
