@@ -193,28 +193,49 @@
   }
   function renderDeletionControls() {
     const selected = selectedLead();
-    for (const [id, leads] of [['delete-business-button',selected ? [selected] : []],['clear-list-button',state.leads]]) {
-      const reason = deletionBlocked(leads);
-      $(id).disabled = Boolean(reason);
-      $(id).title = reason || (id === 'clear-list-button' ? 'Remove all saved businesses, including those hidden by filters.' : 'Remove this business from the saved list.');
-    }
+    const selectedReason = deletionBlocked(selected ? [selected] : []);
+    $('delete-business-button').disabled = Boolean(selectedReason);
+    $('delete-business-button').title = selectedReason || 'Remove this business from the saved list.';
+
+    const clearReason = state.deleting ? 'Removing businesses…' :
+      !state.connected || !state.workspaceToken ? 'Refresh the workspace before deleting businesses.' :
+      state.loadingLeads ? 'Wait for the business list to finish refreshing.' :
+      running(state.search) ? 'Wait for the business search to finish before deleting businesses.' :
+      !state.leads.length ? 'There are no businesses to remove.' : '';
+    const clearSummary = $('clear-list-button');
+    clearSummary.setAttribute('aria-disabled', String(Boolean(clearReason)));
+    clearSummary.title = clearReason || 'Choose High, Medium, Low, or All.';
+    $('clear-menu').classList.toggle('disabled', Boolean(clearReason));
+
+    document.querySelectorAll('[data-clear-priority]').forEach(button => {
+      const priority = button.dataset.clearPriority;
+      const leads = priority === 'ALL' ? state.leads : state.leads.filter(lead => lead.priority === priority);
+      const reason = clearReason || deletionBlocked(leads);
+      button.disabled = Boolean(reason);
+      button.title = reason || `Remove all ${priority === 'ALL' ? '' : priority.toLowerCase() + '-priority ' }saved businesses.`;
+    });
+
     if (pendingDelete) {
       const reason = deletionBlocked(pendingDelete.leads);
       $('confirm-delete').disabled = Boolean(reason);
       $('confirm-delete').title = reason;
-      $('confirm-delete').textContent = state.deleting ? 'Removing…' : pendingDelete.clearAll ? 'Clear list' : 'Delete business';
+      $('confirm-delete').textContent = state.deleting ? 'Removing…' : pendingDelete.scope ? `Clear ${pendingDelete.scope === 'ALL' ? 'all' : pendingDelete.scope.toLowerCase()}` : 'Delete business';
     }
     document.querySelectorAll('[data-close="delete-dialog"]').forEach(button => button.disabled = state.deleting);
   }
-  function openDelete(clearAll) {
-    const selected = selectedLead(), leads = clearAll ? [...state.leads] : selected ? [selected] : [];
+  function openDeleteScope(scope = null) {
+    const selected = selectedLead();
+    const leads = scope ? (scope === 'ALL' ? [...state.leads] : state.leads.filter(lead => lead.priority === scope)) : selected ? [selected] : [];
     if (deletionBlocked(leads)) return;
-    pendingDelete = {leads,clearAll};
-    $('delete-title').textContent = clearAll ? 'Clear the saved list?' : 'Delete this business?';
-    $('delete-description').textContent = clearAll
-      ? `Remove all ${leads.length} saved ${leads.length === 1 ? 'business' : 'businesses'} from this workspace? This includes businesses hidden by your current search or filters.`
+    pendingDelete = {leads,scope};
+    const scoped = Boolean(scope);
+    const label = scope === 'ALL' ? 'all' : String(scope || '').toLowerCase();
+    $('delete-title').textContent = scoped ? `Clear ${label} saved businesses?` : 'Delete this business?';
+    $('delete-description').textContent = scoped
+      ? `Remove ${leads.length} ${scope === 'ALL' ? '' : label + '-priority '}${leads.length === 1 ? 'business' : 'businesses'} from this workspace? Businesses outside this group will be kept. Saved files will remain in the deleted-leads archive.`
       : `Remove ${leads[0].name || 'this business'} from your saved list?`;
     $('delete-error').hidden = true;
+    $('clear-menu').open = false;
     renderDeletionControls();
     $('delete-dialog').showModal();
   }
@@ -681,8 +702,9 @@
   $('workflow-filter').addEventListener('change',()=>{state.workflow = $('workflow-filter').value;renderList();});
   $('website-filter').addEventListener('change',()=>{state.website = $('website-filter').value;renderList();});
   $('lead-sort').addEventListener('change',()=>{state.sort = sortModes.includes($('lead-sort').value) ? $('lead-sort').value : 'priority';savePreferences();renderList();});
-  $('delete-business-button').addEventListener('click',()=>openDelete(false));
-  $('clear-list-button').addEventListener('click',()=>openDelete(true));
+  $('delete-business-button').addEventListener('click',()=>openDeleteScope());
+  document.querySelectorAll('[data-clear-priority]').forEach(button => button.addEventListener('click',()=>openDeleteScope(button.dataset.clearPriority)));
+  $('clear-list-button').addEventListener('click',event=>{ if ($('clear-menu').classList.contains('disabled')) { event.preventDefault(); $('clear-menu').open = false; } });
   $('confirm-delete').addEventListener('click',deleteBusinesses);
   $('delete-dialog').addEventListener('cancel',event=>{if(state.deleting)event.preventDefault();});
   $('delete-dialog').addEventListener('close',()=>{pendingDelete = null;});
