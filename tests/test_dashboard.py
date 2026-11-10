@@ -67,6 +67,19 @@ class DashboardContractTests(WorkspaceFixture):
         self.website(self.beta)
         info = self.info(self.beta).get_json()
         self.assertEqual((info['state'], info['available']), ('ready', True))
+        self.assertEqual(info['qa'], {'status': 'NOT RUN', 'checks_passed': 0, 'checks_total': 0, 'issues': []})
+        (self.beta / 'quality_report.json').write_text(json.dumps({
+            'status': 'PASS',
+            'checks': {
+                'index.html': 'PASS',
+                'html': {'status': 'PASS', 'issues': []},
+                'seo': {'status': 'PASS', 'issues': [], 'warnings': []},
+            },
+            'warnings': [],
+        }), encoding='utf-8')
+        info = self.info(self.beta).get_json()
+        self.assertEqual(info['qa']['status'], 'PASS')
+        self.assertEqual((info['qa']['checks_passed'], info['qa']['checks_total']), (3, 3))
         with self.client.get(info['preview_url']) as response:
             self.assertEqual(response.status_code, 200)
         (self.beta / 'STATUS.json').write_text('{"status":"FAILED"}')
