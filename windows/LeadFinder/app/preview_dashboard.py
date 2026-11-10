@@ -206,9 +206,12 @@ def session_state():
     with jobs_lock:
         active = [{"job_id":job_id, **{key:job.get(key) for key in ("kind","status","message","priority","client_id","started_at")}}
                   for job_id,job in jobs.items() if job.get("status") in ("queued","running")]
-    return jsonify({"workspace_id":hashlib.sha256(str(HANDOFFS.resolve()).encode()).hexdigest()[:12],
+    response = jsonify({"workspace_id":hashlib.sha256(str(HANDOFFS.resolve()).encode()).hexdigest()[:12],
+                    "workspace_token": settings_token,
                     "capabilities":{"search_configured":bool(os.getenv("GOOGLE_MAPS_API_KEY")),"website_configured":bool(os.getenv("DEEPSEEK_API_KEY"))},
                     "active_jobs":active})
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 @app.get("/health")
@@ -302,6 +305,93 @@ def leads():
     })
 
 
+@app.post("/delete-leads")
+def delete_leads():
+    if urlparse(request.host_url).hostname not in ('localhost', '127.0.0.1', '::1'):
+        return jsonify({'error': 'Open the local LeadFinder app to delete businesses.'}), 403
+    origin = request.headers.get('Origin')
+    if origin and origin.rstrip('/') != request.host_url.rstrip('/'):
+        return jsonify({'error': 'Delete businesses from the local LeadFinder app.'}), 403
+    if not secrets.compare_digest(request.headers.get('X-Workspace-Token', '').encode('utf-8'), settings_token.encode('utf-8')):
+        return jsonify({'error': 'Refresh the workspace before deleting businesses.'}), 403
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not isinstance(data.get('leads'), list) or not data['leads']:
+        return jsonify({'error': 'Select at least one business to delete.'}), 400
+
+    targets = []
+    seen = set()
+    for item in data['leads']:
+        if not isinstance(item, dict) or not isinstance(item.get('priority'), str) or not isinstance(item.get('name'), str):
+            return jsonify({'error': 'Each business needs its priority and saved name.'}), 400
+        priority, name = item['priority'].upper(), item['name']
+        if priority not in ('HIGH', 'MEDIUM', 'LOW') or not name or name in ('.', '..') or any(c in name for c in ('/', '\\', ':', '\0')):
+            return jsonify({'error': 'Invalid business selection. Refresh the list and try again.'}), 400
+        if (priority, name) in seen:
+            return jsonify({'error': 'Select each business only once.'}), 400
+        seen.add((priority, name))
+        targets.append({'priority': priority, 'name': name})
+
+    # Searches, builds and removals share this lock so no job starts using a folder
+    # between validation and moving it out of the saved list.
+    with jobs_lock:
+        if any(job.get('kind') == 'leads' and job.get('status') in ('queued', 'running') for job in jobs.values()):
+            return jsonify({'error': 'Wait for the current business search to finish before deleting.'}), 409
+        folders = []
+        root = ROOT.resolve()
+        try:
+            handoffs = HANDOFFS.resolve()
+        except (OSError, RuntimeError):
+            handoffs = None
+        if handoffs != root / 'codex_handoffs':
+            return jsonify({'error': 'The saved business folder is linked elsewhere. No businesses were deleted.'}), 409
+        for item in targets:
+            try:
+                folder = resolve_lead_folder(item['priority'], item['name'])
+            except (OSError, RuntimeError):
+                folder = None
+            expected = handoffs / item['priority'] / item['name']
+            if folder is None or folder != expected or not (folder / 'business.json').is_file():
+                return jsonify({'error': 'A selected business is no longer available. Refresh the list and try again.'}), 404
+            if any(job.get('status') in ('queued', 'running') and (
+                job.get('client') == str(folder) or
+                (job.get('priority'), job.get('client_id')) == (item['priority'], item['name'])
+            ) for job in jobs.values()):
+                return jsonify({'error': 'Wait for the selected businesses to finish building before deleting.'}), 409
+            folders.append(folder)
+
+        archive = root / 'outputs' / 'deleted_leads'
+        try:
+            safe_archive = (root / 'outputs').resolve() == root / 'outputs' and archive.resolve() == archive
+        except (OSError, RuntimeError):
+            safe_archive = False
+        if not safe_archive:
+            return jsonify({'error': 'The deleted business folder is linked elsewhere. No businesses were deleted.'}), 409
+        batch = archive / uuid4().hex
+        moved = []
+        try:
+            batch.mkdir(parents=True, exist_ok=False)
+            for folder in folders:
+                destination = batch / folder.parent.name / folder.name
+                destination.parent.mkdir(exist_ok=True)
+                folder.rename(destination)
+                moved.append((folder, destination))
+        except OSError:
+            # Directory renames retain generated websites and avoid partially
+            # deleting file contents if Windows has a file open or a disk fails.
+            rollback_failed = False
+            for folder, destination in reversed(moved):
+                try:
+                    destination.rename(folder)
+                except OSError:
+                    rollback_failed = True
+            if rollback_failed:
+                return jsonify({'error': 'Could not finish clearing the list. Some businesses remain in outputs/deleted_leads with their saved files. Refresh the list before trying again.'}), 500
+            return jsonify({'error': 'Could not delete the selected businesses. No businesses were removed. Close files using these folders and try again.'}), 500
+
+    return jsonify({'deleted_count': len(targets), 'deleted': targets,
+                    'message': 'Businesses removed from the saved list. Their files are kept in outputs/deleted_leads.'})
+
+
 def resolve_client(priority, name):
     folder = resolve_lead_folder(priority, name)
     if folder and str(priority).upper() in ("HIGH", "MEDIUM") and (folder / "AI_HANDOFF.json").is_file():
@@ -342,11 +432,11 @@ def generate_landing_page():
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
         return jsonify({"error": "Expected a JSON object."}), 400
-    client_folder = resolve_client(data.get("priority"), data.get("name"))
-    if not client_folder:
-        return jsonify({"error": "Lead handoff not found. Generate the lead handoff first."}), 404
     job_id = uuid4().hex
     with jobs_lock:
+        client_folder = resolve_client(data.get("priority"), data.get("name"))
+        if not client_folder:
+            return jsonify({"error": "Lead handoff not found. Generate the lead handoff first."}), 404
         if any(job.get("client") == str(client_folder) and job.get("status") in ("queued", "running") for job in jobs.values()):
             return jsonify({"error": "A landing page is already being generated for this lead."}), 409
         jobs[job_id] = {"status": "queued", "message": "Queued website build...", "kind":"website",

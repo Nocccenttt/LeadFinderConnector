@@ -3,8 +3,10 @@
   const $ = id => document.getElementById(id);
   const running = job => job && ['starting', 'queued', 'running'].includes(job.status);
   const keyOf = lead => `${lead.priority}::${encodeURIComponent(lead.client_id)}`;
-  const state = {leads:[], selected:null, priority:'ALL', website:'ALL', jobs:new Map(), search:null,
-    workspace:'', capabilities:{}, device:innerWidth < 800 ? 'mobile' : 'desktop', connected:false};
+  const sortModes = ['priority','score-desc','score-asc','name-asc','name-desc'];
+  const state = {leads:[], selected:null, priority:'ALL', website:'ALL', sort:'priority', jobs:new Map(), search:null,
+    workspace:'', workspaceToken:'', capabilities:{}, device:innerWidth < 800 ? 'mobile' : 'desktop', connected:false, deleting:false, loadingLeads:false};
+  let leadLoadEpoch = 0, pendingDelete = null;
   const watching = new Set();
   const preview = {key:null, url:null, status:'empty', token:0, controller:null, timeout:null};
   let rebuildKey = null;
@@ -107,13 +109,14 @@
   function saveStorage(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Storage is optional in private/restricted browsers. */ } }
   function savePreferences() {
     if (!state.workspace) return;
-    saveStorage(`leadfinder:${state.workspace}`, {selected:state.selected, device:state.device,
+    saveStorage(`leadfinder:${state.workspace}`, {selected:state.selected, device:state.device, sort:state.sort,
       jobs:[...state.jobs.values()].filter(running), search:running(state.search) ? state.search : null});
   }
   function setConnection(connected) {
     state.connected = connected;
     $('connection').classList.toggle('connected', connected);
     $('connection').textContent = connected ? 'Workspace connected' : 'Connection interrupted';
+    renderDeletionControls();
   }
   async function api(url, options = {}) {
     const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000);
@@ -131,6 +134,93 @@
     $('workspace-error-text').textContent = message;
     $('workspace-error').hidden = !message;
   }
+  function compareLeads(a, b) {
+    const score = lead => Number.isFinite(Number(lead.score)) ? Number(lead.score) : 0;
+    const nameOrder = String(a.name || a.client_id).localeCompare(String(b.name || b.client_id), undefined, {sensitivity:'base',numeric:true});
+    let order = 0;
+    if (state.sort === 'name-asc' || state.sort === 'name-desc') order = nameOrder * (state.sort === 'name-desc' ? -1 : 1);
+    else if (state.sort === 'score-asc' || state.sort === 'score-desc') order = (score(a) - score(b)) * (state.sort === 'score-desc' ? -1 : 1);
+    else {
+      const priority = {HIGH:0,MEDIUM:1,LOW:2};
+      order = (priority[a.priority] ?? 3) - (priority[b.priority] ?? 3) || score(b) - score(a);
+    }
+    const aKey = keyOf(a), bKey = keyOf(b);
+    return order || nameOrder || (aKey < bKey ? -1 : aKey > bKey ? 1 : 0);
+  }
+  function deletionBlocked(leads) {
+    if (state.deleting) return 'Removing businesses…';
+    if (!state.connected || !state.workspaceToken) return 'Refresh the workspace before deleting businesses.';
+    if (state.loadingLeads) return 'Wait for the business list to finish refreshing.';
+    if (!leads.length) return 'There are no businesses to remove.';
+    if (running(state.search)) return 'Wait for the business search to finish before deleting businesses.';
+    if (leads.some(lead => running(state.jobs.get(keyOf(lead))))) return 'Wait for the selected website builds to finish before deleting these businesses.';
+    const savedKeys = new Set(state.leads.map(keyOf));
+    if (leads.some(lead => !savedKeys.has(keyOf(lead)))) return 'The list has changed. Close this confirmation and select the businesses again.';
+    return '';
+  }
+  function renderDeletionControls() {
+    const selected = selectedLead();
+    for (const [id, leads] of [['delete-business-button',selected ? [selected] : []],['clear-list-button',state.leads]]) {
+      const reason = deletionBlocked(leads);
+      $(id).disabled = Boolean(reason);
+      $(id).title = reason || (id === 'clear-list-button' ? 'Remove all saved businesses, including those hidden by filters.' : 'Remove this business from the saved list.');
+    }
+    if (pendingDelete) {
+      const reason = deletionBlocked(pendingDelete.leads);
+      $('confirm-delete').disabled = Boolean(reason);
+      $('confirm-delete').title = reason;
+      $('confirm-delete').textContent = state.deleting ? 'Removing…' : pendingDelete.clearAll ? 'Clear list' : 'Delete business';
+    }
+    document.querySelectorAll('[data-close="delete-dialog"]').forEach(button => button.disabled = state.deleting);
+  }
+  function openDelete(clearAll) {
+    const selected = selectedLead(), leads = clearAll ? [...state.leads] : selected ? [selected] : [];
+    if (deletionBlocked(leads)) return;
+    pendingDelete = {leads,clearAll};
+    $('delete-title').textContent = clearAll ? 'Clear the saved list?' : 'Delete this business?';
+    $('delete-description').textContent = clearAll
+      ? `Remove all ${leads.length} saved ${leads.length === 1 ? 'business' : 'businesses'} from this workspace? This includes businesses hidden by your current search or filters.`
+      : `Remove ${leads[0].name || 'this business'} from your saved list?`;
+    $('delete-error').hidden = true;
+    renderDeletionControls();
+    $('delete-dialog').showModal();
+  }
+  async function deleteBusinesses() {
+    if (!pendingDelete || deletionBlocked(pendingDelete.leads)) return;
+    const requested = pendingDelete.leads.map(lead => ({priority:lead.priority,name:lead.client_id}));
+    state.deleting = true; leadLoadEpoch += 1;
+    renderDeletionControls();
+    $('delete-error').hidden = true;
+    let refreshAfter = false;
+    try {
+      const result = await api('/delete-leads',{method:'POST',headers:{'Content-Type':'application/json','X-Workspace-Token':state.workspaceToken},body:JSON.stringify({leads:requested})});
+      if (!Array.isArray(result.deleted)) throw new Error('The deletion result could not be read. Check the refreshed list before trying again.');
+      const removed = new Set(result.deleted.map(lead => keyOf({priority:lead.priority,client_id:lead.name})));
+      state.leads = state.leads.filter(lead => !removed.has(keyOf(lead)));
+      for (const key of removed) state.jobs.delete(key);
+      if (removed.has(state.selected)) state.selected = null;
+      savePreferences(); renderList(); renderSelection();
+      $('delete-dialog').close();
+      pendingDelete = null;
+      $('workspace-status-text').textContent = `${removed.size} ${removed.size === 1 ? 'business removed' : 'businesses removed'} from your saved list. Saved files were kept in the local archive.`;
+      $('workspace-status').hidden = false;
+      $('business-panel').focus({preventScroll:true});
+      refreshAfter = true;
+    } catch (error) {
+      $('delete-error').textContent = error.message;
+      $('delete-error').hidden = false;
+      if (error.status === 403 || error.status === 409) await readSession(false).catch(() => {});
+      refreshAfter = true;
+    } finally {
+      state.deleting = false;
+      renderDeletionControls();
+      if (refreshAfter) await loadLeads();
+      if (pendingDelete) {
+        const reason = deletionBlocked(pendingDelete.leads);
+        if (reason) { $('delete-error').textContent = reason; $('delete-error').hidden = false; }
+      }
+    }
+  }
   function filteredLeads() {
     const query = $('lead-search').value.trim().toLocaleLowerCase();
     return state.leads.filter(lead => {
@@ -139,9 +229,10 @@
       const status = running(job) ? 'working' : job?.status === 'error' ? 'failed' : lead.preview_state || (lead.demo_ready ? 'ready' : 'missing');
       return (!query || searchable.includes(query)) && (state.priority === 'ALL' || lead.priority === state.priority) &&
         (state.website === 'ALL' || state.website === status || (state.website === 'missing' && status === 'incomplete'));
-    });
+    }).sort(compareLeads);
   }
   function renderList() {
+    renderDeletionControls();
     const list = $('business-list');
     const focusedKey = list.contains(document.activeElement) ? document.activeElement.dataset.key : null;
     list.replaceChildren();
@@ -205,23 +296,32 @@
     if (pointer && innerWidth < 800) $('detail-panel').scrollIntoView({block:'start'});
   }
   async function loadLeads() {
+    if (state.deleting) return false;
+    const epoch = ++leadLoadEpoch;
+    state.loadingLeads = true; renderDeletionControls();
     $('refresh-button').disabled = true;
     try {
       const data = await api('/leads');
+      if (epoch !== leadLoadEpoch) return false;
       if (!Array.isArray(data.leads)) throw new Error('The business list could not be read. Try refreshing.');
       state.leads = data.leads;
       if (state.selected && !selectedLead()) state.selected = null;
+      savePreferences();
       setConnection(true); workspaceError(''); renderList(); renderSelection();
       return true;
     } catch (error) {
+      if (epoch !== leadLoadEpoch) return false;
       setConnection(false); workspaceError(`Could not load saved businesses. ${error.message}`);
       $('business-list').setAttribute('aria-busy','false');
       if (!state.leads.length) $('business-list').replaceChildren(node('div','list-empty','The business list is unavailable. Use Retry above to reconnect.'));
       return false;
-    } finally { $('refresh-button').disabled = false; }
+    } finally {
+      if (epoch === leadLoadEpoch) { state.loadingLeads = false; $('refresh-button').disabled = false; renderDeletionControls(); }
+    }
   }
   function renderSelection(forcePreview = false) {
     const lead = selectedLead();
+    renderDeletionControls();
     $('detail-panel').dataset.hasSelection = String(Boolean(lead));
     $('selection-empty').hidden = Boolean(lead); $('selected-workspace').hidden = !lead;
     if (!lead) { resetPreview(); return; }
@@ -330,13 +430,14 @@
     $('preview-size').textContent = `${width}px · Fit ${Math.round(scale * 100)}%`;
   }
   function openSearch() {
+    if (state.deleting) return;
     if (running(state.search)) { $('search-progress').scrollIntoView({block:'start'}); return; }
     $('search-form-error').hidden = true;
     $('find-dialog').showModal();
   }
   async function beginBuild(preserveContent) {
     const lead = selectedLead();
-    if (!lead || running(state.jobs.get(state.selected))) return;
+    if (!lead || state.deleting || running(state.jobs.get(state.selected))) return;
     const key = keyOf(lead), starting = {key,priority:lead.priority,client_id:lead.client_id,kind:'website',status:'starting',started_at:Date.now()/1000,message:'Starting the website build…'};
     state.jobs.set(key,starting); savePreferences(); renderList(); renderSelection();
     try {
@@ -382,6 +483,7 @@
     } finally { watching.delete(job.job_id); }
   }
   function renderSearch(job) {
+    renderDeletionControls();
     $('search-progress').hidden = false;
     $('search-phase').textContent = job.status === 'error' ? 'Search needs attention' : job.phase || (job.status === 'complete' ? 'Search complete' : 'Finding businesses…');
     $('search-message').textContent = [job.message,job.current_business].filter(Boolean).join(' · ');
@@ -413,9 +515,12 @@
   async function readSession(restore) {
     const session = await api('/session');
     state.workspace = session.workspace_id; state.capabilities = session.capabilities || {};
+    state.workspaceToken = typeof session.workspace_token === 'string' ? session.workspace_token : '';
     if (restore) {
       const saved = readStorage(`leadfinder:${state.workspace}`,{});
       state.selected = saved.selected || null;
+      if (sortModes.includes(saved.sort)) state.sort = saved.sort;
+      $('lead-sort').value = state.sort;
       if (['desktop','mobile'].includes(saved.device)) state.device = saved.device;
       for (const job of saved.jobs || []) if (job.key && job.job_id) state.jobs.set(job.key,job);
       if (saved.search?.job_id) state.search = saved.search;
@@ -436,7 +541,7 @@
   $('find-form').addEventListener('submit',async event => {
     event.preventDefault();
     const niche = $('niche').value.trim(), area = $('area').value.trim();
-    if (!niche || !area || running(state.search)) return;
+    if (!niche || !area || state.deleting || running(state.search)) return;
     $('search-submit').disabled = true; $('search-form-error').hidden = true;
     try {
       const result = await api('/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({niche,area,max_results:Number($('max-results').value)})});
@@ -450,6 +555,13 @@
   document.querySelectorAll('[data-priority]').forEach(button => button.addEventListener('click',()=>{state.priority = button.dataset.priority;renderList();}));
   $('lead-search').addEventListener('input',renderList);
   $('website-filter').addEventListener('change',()=>{state.website = $('website-filter').value;renderList();});
+  $('lead-sort').addEventListener('change',()=>{state.sort = sortModes.includes($('lead-sort').value) ? $('lead-sort').value : 'priority';savePreferences();renderList();});
+  $('delete-business-button').addEventListener('click',()=>openDelete(false));
+  $('clear-list-button').addEventListener('click',()=>openDelete(true));
+  $('confirm-delete').addEventListener('click',deleteBusinesses);
+  $('delete-dialog').addEventListener('cancel',event=>{if(state.deleting)event.preventDefault();});
+  $('delete-dialog').addEventListener('close',()=>{pendingDelete = null;});
+  $('dismiss-workspace-status').addEventListener('click',()=>{$('workspace-status').hidden = true;});
   async function refresh() { try { await readSession(false); } catch { /* loadLeads supplies the visible connection error. */ } await loadLeads(); }
   $('refresh-button').addEventListener('click',refresh); $('retry-workspace').addEventListener('click',refresh);
   $('export-button').addEventListener('click',()=>{location.href = '/export';});

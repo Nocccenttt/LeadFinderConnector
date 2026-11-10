@@ -370,7 +370,7 @@ h1 {
   max-width:145px;
 }
 .business-list {
-  height:calc(100dvh - 435px);
+  height:calc(100dvh - 501px);
   min-height:280px;
   max-height:760px;
   overflow:auto;
@@ -1203,3 +1203,16 @@ progress::-webkit-progress-value {
 .settings-recovery { margin:0 24px 12px; }
 .search-progress .settings-recovery { margin:12px 0 0; }
 @media(max-width:800px) { .settings-label { display:none; } .settings-trigger { width:36px; padding-inline:7px; } .settings-modal .modal-footer { bottom:-22px; } }
+
+/* Saved-list management uses the same controls on desktop and mobile. */
+.list-management { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:end; padding:10px 16px; border-bottom:1px solid var(--line); }
+.list-management label { display:grid; gap:4px; min-width:0; font-size:11px; color:var(--muted); }
+.list-management select { width:100%; min-height:36px; padding:7px 8px; font-size:12px; }
+.list-management .button { min-height:36px; }
+.button.danger-text { color:var(--red); }
+.detail-title-row { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.detail-title-row h2 { flex:1 1 180px; min-width:0; }
+.notice.success { color:var(--green); border-color:#cfe0d0; background:#f3faf3; }
+.notice.success>span { overflow-wrap:anywhere; }
+.delete-modal .modal-description,.delete-modal code { overflow-wrap:anywhere; }
+.delete-modal .modal-footer { flex-wrap:wrap; }

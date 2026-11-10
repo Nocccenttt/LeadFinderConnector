@@ -388,3 +388,168 @@ class DashboardBrowserTests(WorkspaceFixture):
         expect(self.page.locator('#business-panel')).to_be_visible()
         expect(self.page.locator('#detail-panel')).to_be_hidden()
         self.assertEqual(self.errors, [])
+
+    def enable_list_management(self):
+        from playwright.sync_api import expect
+        self.page.unroute('**/session')
+        def session(route):
+            data = self.client.get('/session').get_json()
+            data.update(workspace_id='test-workspace', capabilities={
+                'search_configured': True, 'website_configured': True})
+            route.fulfill(json=data)
+        self.page.route('**/session', session)
+        self.page.locator('#refresh-button').click()
+        expect(self.page.locator('#clear-list-button')).to_be_enabled()
+
+    def test_list_sort_orders_filters_and_saved_preference(self):
+        from playwright.sync_api import expect
+        for folder, score in [(self.alpha, 80), (self.beta, 95), (self.gamma, 80), (self.low, 10)]:
+            path = folder / 'business.json'
+            data = json.loads(path.read_text())
+            data['opportunity_score'] = score
+            path.write_text(json.dumps(data))
+        self.enable_list_management()
+        orders = {
+            'priority': [self.alpha, self.gamma, self.beta, self.low],
+            'score-desc': [self.beta, self.alpha, self.gamma, self.low],
+            'score-asc': [self.low, self.alpha, self.gamma, self.beta],
+            'name-asc': [self.alpha, self.beta, self.low, self.gamma],
+            'name-desc': [self.gamma, self.low, self.beta, self.alpha],
+        }
+        for sort, folders in orders.items():
+            with self.subTest(sort=sort):
+                self.page.locator('#lead-sort').select_option(sort)
+                expect(self.page.locator('.lead-row-name')).to_have_text([folder.name for folder in folders])
+        self.page.locator('[data-priority="HIGH"]').click()
+        self.page.locator('#lead-sort').select_option('score-desc')
+        expect(self.page.locator('.lead-row-name')).to_have_text([self.alpha.name, self.gamma.name])
+        self.page.locator('#lead-search').fill('Roofing')
+        expect(self.page.locator('.lead-row-name')).to_have_text([self.gamma.name])
+        self.select(self.gamma)
+        self.page.reload()
+        expect(self.page.locator('#lead-sort')).to_have_value('score-desc')
+        expect(self.page.locator('.lead-row-name')).to_have_text([folder.name for folder in orders['score-desc']])
+        expect(self.page.locator('#selected-name')).to_have_text(self.gamma.name)
+        self.assertEqual(self.errors, [])
+
+    def test_delete_business_cancel_pending_lock_and_saved_result(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        self.select(self.alpha)
+        expect(self.page.locator('#frame-stage')).to_be_visible()
+        self.page.locator('#delete-business-button').click()
+        expect(self.page.locator('#delete-description')).to_contain_text(self.alpha.name)
+        self.page.locator('#delete-dialog').get_by_role('button', name='Cancel', exact=True).click()
+        expect(self.page.locator('.lead-row')).to_have_count(4)
+        self.assertTrue(self.alpha.exists())
+        held = []
+        self.page.route('**/delete-leads', lambda route: held.append(route), times=1)
+        self.page.locator('#delete-business-button').click()
+        self.page.locator('#confirm-delete').click()
+        expect(self.page.locator('#confirm-delete')).to_be_disabled()
+        expect(self.page.locator('#delete-dialog').get_by_role('button', name='Cancel', exact=True)).to_be_disabled()
+        self.page.keyboard.press('Escape')
+        expect(self.page.locator('#delete-dialog')).to_be_visible()
+        self.assertEqual(len(held), 1)
+        held[0].continue_()
+        expect(self.page.locator('#delete-dialog')).to_be_hidden()
+        expect(self.page.locator('.lead-row')).to_have_count(3)
+        expect(self.page.locator('#selected-workspace')).to_be_hidden()
+        expect(self.page.locator('#preview-frame')).to_have_attribute('src', 'about:blank')
+        expect(self.page.locator('#workspace-status')).to_contain_text('1 business removed')
+        self.assertFalse(self.alpha.exists())
+        archived = list((self.root / 'outputs/deleted_leads').rglob('website/index.html'))
+        self.assertEqual(len(archived), 1)
+        self.assertIn(self.alpha.name, archived[0].read_text())
+        self.page.reload()
+        expect(self.page.locator('.lead-row')).to_have_count(3)
+        expect(self.page.locator('#selected-workspace')).to_be_hidden()
+        self.assertEqual(self.errors, [])
+
+    def test_clear_list_includes_filtered_businesses_and_stays_empty_after_reload(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        self.page.locator('[data-priority="HIGH"]').click()
+        expect(self.page.locator('.lead-row')).to_have_count(2)
+        self.page.locator('#clear-list-button').click()
+        expect(self.page.locator('#delete-description')).to_contain_text('all 4 saved businesses')
+        expect(self.page.locator('#delete-description')).to_contain_text('hidden by your current search or filters')
+        self.page.locator('#confirm-delete').click()
+        expect(self.page.locator('.lead-row')).to_have_count(0)
+        expect(self.page.locator('#business-list')).to_contain_text('Your next client starts here.')
+        expect(self.page.locator('#saved-count')).to_have_text('0 saved · 0 websites ready')
+        expect(self.page.locator('#clear-list-button')).to_be_disabled()
+        self.page.reload()
+        expect(self.page.locator('#business-list')).to_contain_text('Your next client starts here.')
+        expect(self.page.locator('.lead-row')).to_have_count(0)
+        self.assertEqual(len(list((self.root / 'outputs/deleted_leads').rglob('business.json'))), 4)
+        self.assertEqual(self.errors, [])
+
+    def test_active_jobs_disable_only_affected_delete_actions(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        self.select(self.beta)
+        self.page.locator('#build-button').click()
+        expect(self.page.locator('#website-state')).to_have_text('Building website')
+        expect(self.page.locator('#delete-business-button')).to_be_disabled()
+        expect(self.page.locator('#clear-list-button')).to_be_disabled()
+        self.select(self.alpha)
+        expect(self.page.locator('#delete-business-button')).to_be_enabled()
+        with dashboard.jobs_lock:
+            dashboard.jobs['external-search'] = {'kind': 'leads', 'status': 'running', 'message': 'Searching elsewhere.'}
+        self.page.locator('#refresh-button').click()
+        expect(self.page.locator('#search-message')).to_contain_text('Searching elsewhere.')
+        expect(self.page.locator('#delete-business-button')).to_be_disabled()
+        with dashboard.jobs_lock:
+            dashboard.jobs['external-search']['status'] = 'complete'
+        expect(self.page.locator('#delete-business-button')).to_be_enabled()
+        expect(self.page.locator('#clear-list-button')).to_be_disabled()
+        self.statuses['1'] = {'status': 'error', 'message': 'Test build ended.'}
+        expect(self.page.locator('#clear-list-button')).to_be_enabled()
+        self.assertEqual(self.errors, [])
+
+    def test_delete_rejection_refreshes_jobs_without_removing_the_business(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        self.select(self.gamma)
+        self.page.locator('#delete-business-button').click()
+        with dashboard.jobs_lock:
+            dashboard.jobs['external-build'] = {'kind': 'website', 'status': 'running',
+                'priority': 'HIGH', 'client_id': self.gamma.name, 'client': str(self.gamma), 'message': 'Building elsewhere.'}
+        self.statuses['external-build'] = {'status': 'running', 'message': 'Building elsewhere.'}
+        self.page.locator('#confirm-delete').click()
+        expect(self.page.locator('#delete-error')).to_contain_text('Wait for')
+        expect(self.page.locator('#confirm-delete')).to_be_disabled()
+        expect(self.page.locator('.lead-row')).to_have_count(4)
+        self.assertTrue(self.gamma.exists())
+        self.page.locator('#delete-dialog').get_by_role('button', name='Cancel', exact=True).click()
+        expect(self.page.locator('#selected-name')).to_have_text(self.gamma.name)
+        self.assertEqual(self.errors, [])
+
+    def test_late_list_response_cannot_restore_a_deleted_business(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        stale = self.client.get('/leads').get_json()
+        self.select(self.beta)
+        self.page.locator('#build-button').click()
+        expect(self.page.locator('#website-state')).to_have_text('Building website')
+        held = []
+        self.page.route('**/leads', lambda route: held.append(route), times=1)
+        self.page.locator('#refresh-button').click()
+        expect(self.page.locator('#refresh-button')).to_be_disabled()
+        self.website(self.beta)
+        self.statuses['1'] = {'status': 'complete', 'message': 'Ready.'}
+        expect(self.page.locator('#clear-list-button')).to_be_enabled()
+        self.select(self.alpha)
+        self.page.locator('#delete-business-button').click()
+        self.page.locator('#confirm-delete').click()
+        expect(self.page.locator('.lead-row')).to_have_count(3)
+        expect(self.page.locator('#clear-list-button')).to_be_enabled()
+        self.assertEqual(len(held), 1)
+        with self.page.expect_response(lambda response: response.url.endswith('/leads')) as response:
+            held[0].fulfill(json=stale)
+        response.value.finished()
+        self.page.evaluate('() => new Promise(resolve => requestAnimationFrame(resolve))')
+        expect(self.page.locator('.lead-row')).to_have_count(3)
+        expect(self.page.locator('.lead-row').filter(has_text=self.alpha.name)).to_have_count(0)
+        self.assertEqual(self.errors, [])
