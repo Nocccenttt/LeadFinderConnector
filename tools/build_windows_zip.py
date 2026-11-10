@@ -26,6 +26,11 @@ Pexels is optional for images. Keys are supplied separately, not in this ZIP.
 To change keys later, open API keys in LeadFinder. Enter replacements and
 click Save keys. Blank fields keep saved keys; no restart is needed.
 
+Use Sort by to order businesses by priority, score, or name.
+Delete business removes one entry; Clear list removes all saved businesses,
+including those hidden by filters. Both ask for confirmation. Their saved
+files and websites are kept in the app's outputs/deleted_leads folder.
+
 If setup fails, read the error and run the installer again to retry.
 If opening fails, details are in the installed app's logs folder.
 """

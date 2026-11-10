@@ -155,6 +155,56 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     @unittest.skipUnless(os.getenv('LEADFINDER_TEST_APP'), 'Requires a real installer-prepared workspace')
+    def test_repository_setup_repairs_missing_pythonw_in_place(self):
+        installer = self.app / 'INSTALL_LEADFINDER.bat'
+        original_installer = installer.read_bytes() if installer.exists() else None
+        config = (self.app / '.env').read_bytes()
+        business = self.app / 'codex_handoffs' / 'repository-setup-test.txt'
+        output = self.app / 'outputs' / 'repository-setup-test.txt'
+        for sentinel in (business, output):
+            self.assertFalse(sentinel.exists())
+            sentinel.parent.mkdir(parents=True, exist_ok=True)
+            sentinel.write_text('Saved work must survive repository setup.', encoding='utf-8')
+            self.addCleanup(lambda path=sentinel: path.unlink(missing_ok=True))
+        pythonw = self.app / '.venv' / 'Scripts' / 'pythonw.exe'
+        self.assertTrue(pythonw.is_file())
+        self.assertTrue((self.app / 'scripts' / 'Install-LeadFinder.ps1').is_file())
+        with tempfile.TemporaryDirectory(prefix='LeadFinder repository setup ') as folder:
+            temporary = Path(folder)
+            backup = temporary / 'pythonw.exe'
+            wrong_install = temporary / 'must not install here'
+            shortcuts = temporary / 'shortcuts'
+            shutil.copy2(REPO / 'INSTALL_LEADFINDER.bat', installer)
+            shutil.copy2(pythonw, backup)
+            pythonw.unlink()
+            try:
+                base_python = Path(getattr(sys, '_base_executable', sys.executable))
+                env = {**os.environ, 'LEADFINDER_TEST_BAT': str(installer),
+                       'LEADFINDER_INSTALL_ROOT': str(wrong_install),
+                       'LEADFINDER_SHORTCUT_FOLDER': str(shortcuts),
+                       'LEADFINDER_NO_LAUNCH': '1', 'LEADFINDER_SKIP_KEY_PROMPT': '1',
+                       'PATH': str(base_python.parent) + os.pathsep + os.environ.get('PATH', '')}
+                result = subprocess.run(f'"{os.environ["COMSPEC"]}" /d /s /c ""%LEADFINDER_TEST_BAT%""',
+                    env=env, capture_output=True, text=True, timeout=240, stdin=subprocess.DEVNULL)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertTrue(pythonw.is_file(), 'Repository setup must restore the missing windowless Python launcher.')
+                self.assertFalse(wrong_install.exists(), 'Repository setup must prepare this folder in place.')
+                self.assertTrue((shortcuts / 'LeadFinder.lnk').is_file())
+                self.assertEqual((self.app / '.env').read_bytes(), config)
+                for sentinel in (business, output):
+                    self.assertEqual(sentinel.read_text(encoding='utf-8'), 'Saved work must survive repository setup.')
+                self.launch()
+                self.assertEqual(requests.get(self.address + '/health', timeout=3).json(),
+                                 {'app': 'leadfinder', 'root': str(self.app)})
+            finally:
+                if not pythonw.exists():
+                    shutil.copy2(backup, pythonw)
+                if original_installer is None:
+                    installer.unlink(missing_ok=True)
+                else:
+                    installer.write_bytes(original_installer)
+
+    @unittest.skipUnless(os.getenv('LEADFINDER_TEST_APP'), 'Requires a real installer-prepared workspace')
     def test_zip_update_restarts_idle_app_and_preserves_keys(self):
         self.launch()
         before = (self.app / '.env').read_bytes()
