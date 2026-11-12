@@ -42,6 +42,13 @@ def content(design):
 
 
 class CompositionTests(unittest.TestCase):
+    def test_local_eyebrow_does_not_duplicate_nested_location_label(self):
+        from reference_composition import _content_slots
+        slots = _content_slots('<section><span class="eyebrow">DENTISTRY</span><div class="location-box"><span class="eyebrow">LOCAL LOCATION</span><h3>123 Main Street</h3></div></section>', 'local')
+        self.assertIn('DENTISTRY', slots['eyebrow'])
+        self.assertNotIn('LOCAL LOCATION', slots['eyebrow'])
+        self.assertIn('LOCAL LOCATION', slots['location'])
+
     def test_dedicated_architecture_request_uses_selected_reference_and_corrects_invalid_output(self):
         client = Mock()
         invalid = spec()["page_blueprint"]

@@ -1,3 +1,4 @@
+from build_progress import stage
 """Reference-driven generator ported from PHASE2C3_FIXED7; see GENERATOR_MIGRATION.md."""
 import argparse
 import json
@@ -728,6 +729,7 @@ def generate_copy(business, handoff):
         max_retries=1,
     )
 
+    stage('research', 'Researching reference websites and measuring their layouts.')
     reference_candidates = get_reference_research(
         business,
         handoff,
@@ -771,6 +773,7 @@ def generate_copy(business, handoff):
         separators=(",", ":"),
     )
 
+    stage('copy', 'Writing business copy and selecting the design direction.')
     response = client.chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
@@ -980,6 +983,7 @@ def generate_copy(business, handoff):
 
 
 def generate_composition(client, design, candidate, content, business, research_dir=None):
+    stage('design', 'Planning the page composition from the selected reference.')
     """Design architecture separately so the legacy copy schema cannot dictate it."""
     observed = candidate.get("rendered_desktop", {})
     selected_sections = [{**section, "source_index": index} for index, section in enumerate(observed.get("sections", []))]
@@ -2525,6 +2529,7 @@ def build_html(business, copy, niche, output_dir, handoff=None):
 
 
 def generate_website(handoff_path, preserve_content=False):
+    stage('research', 'Preparing business details and reference research.')
     handoff_path = Path(handoff_path)
 
     handoff = load_json(handoff_path)
@@ -2574,6 +2579,7 @@ def generate_website(handoff_path, preserve_content=False):
     if previous is None:
         copy = guard_sparse_business_copy(copy, business, handoff, preserve_general_copy=True)
 
+    stage('rendering', 'Building the page, styles, fonts, and local assets.')
     output_dir = handoff_path.parent / "website"
     output_dir.mkdir(exist_ok=True)
     install_craft_fonts(output_dir)

@@ -168,7 +168,7 @@ try {
     Write-Host '[4/5] Installing the browser used for design references...'
     $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path (Split-Path -Parent $AppRoot) 'browsers'
     Invoke-Python $venvPython @('-m','playwright','install','chromium')
-    Invoke-Python $venvPython @('-c','import flask,openai,dotenv,bs4,requests,playwright')
+    Invoke-Python $venvPython @('-c','import flask,openai,dotenv,bs4,requests,playwright,waitress')
     Write-Host '[5/5] Saving settings and creating your launcher...'
     Set-UpKeys
     New-Item -ItemType Directory -Force -Path (Join-Path $AppRoot 'codex_handoffs') | Out-Null

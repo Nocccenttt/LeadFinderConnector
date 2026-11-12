@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 from website_planning import build_seo_strategy, validate_seo_html
 from color_foundation import contrast
 from reference_composition import validate_blueprint
+from website_status import website_snapshot
 
 
 FORBIDDEN_CLAIMS = [
@@ -27,6 +28,7 @@ FORBIDDEN_CLAIMS = [
 
 def validate(client_folder):
     client_folder = Path(client_folder)
+    before = website_snapshot(client_folder)
     business_file = client_folder / "business.json"
     website_folder = client_folder / "website"
 
@@ -148,6 +150,12 @@ def validate(client_folder):
         else "NEEDS REVIEW"
     )
 
+    after = website_snapshot(client_folder)
+    report['website_fingerprint'] = after['fingerprint']
+    if not after['fingerprint'] or before['fingerprint'] != after['fingerprint']:
+        report['status'] = 'NEEDS REVIEW'
+        report['website_fingerprint'] = ''
+        report['warnings'].append('Website files changed or could not be checked safely. Run QA again.')
     output = client_folder / "quality_report.json"
     with output.open("w", encoding="utf-8") as file:
         json.dump(report, file, indent=2, ensure_ascii=False)

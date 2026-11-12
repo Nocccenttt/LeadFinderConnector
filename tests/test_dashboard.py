@@ -66,10 +66,11 @@ class DashboardContractTests(WorkspaceFixture):
         self.assertEqual(set(info['missing_assets']), {'styles.css', 'script.js'})
         self.website(self.beta)
         info = self.info(self.beta).get_json()
-        self.assertEqual((info['state'], info['available']), ('ready', True))
+        self.assertEqual((info['state'], info['available']), ('draft', True))
         self.assertEqual(info['qa'], {'status': 'NOT RUN', 'checks_passed': 0, 'checks_total': 0, 'issues': []})
         (self.beta / 'quality_report.json').write_text(json.dumps({
             'status': 'PASS',
+            'website_fingerprint': dashboard.website_status(self.beta)['fingerprint'],
             'checks': {
                 'index.html': 'PASS',
                 'html': {'status': 'PASS', 'issues': []},
@@ -83,14 +84,14 @@ class DashboardContractTests(WorkspaceFixture):
         with self.client.get(info['preview_url']) as response:
             self.assertEqual(response.status_code, 200)
         (self.beta / 'STATUS.json').write_text('{"status":"FAILED"}')
-        self.assertEqual(self.info(self.beta).get_json()['state'], 'failed')
+        self.assertEqual(self.info(self.beta).get_json()['state'], 'needs_attention')
         (self.beta / 'website' / 'script.js').write_text('')
         self.assertFalse(self.info(self.beta).get_json()['available'])
         self.assertEqual(self.client.get('/preview-status?priority=HIGH&name=../outside').status_code, 404)
 
     def test_list_reports_build_eligibility_and_complete_packages(self):
         leads = self.client.get('/leads').get_json()
-        self.assertEqual((leads['total'], leads['ready'], leads['low']), (4, 1, 1))
+        self.assertEqual((leads['total'], leads['ready'], leads['low']), (4, 0, 1))
         by_name = {lead['name']: lead for lead in leads['leads']}
         self.assertTrue(by_name[self.beta.name]['can_generate'])
         self.assertFalse(by_name[self.low.name]['can_generate'])
@@ -209,6 +210,13 @@ class DashboardBrowserTests(WorkspaceFixture):
         def status(route):
             job_id = parse_qs(urlparse(route.request.url).query)['job_id'][0]
             result = self.statuses.get(job_id)
+            if result and job_id in dashboard.jobs:
+                with dashboard.jobs_lock:
+                    dashboard.jobs[job_id]['status'] = result['status']
+            if result and job_id.isdigit() and result['status'] in ('complete', 'error'):
+                payload = self.builds[int(job_id) - 1]
+                folder = self.handoffs / payload['priority'] / payload['name']
+                (folder / 'STATUS.json').write_text(json.dumps({'status': 'PASS' if result['status'] == 'complete' else 'FAILED'}))
             route.fulfill(status=200 if result else 404, json=result or {'message': 'Job not found.'})
         self.page.route('**/generate-landing-page', build)
         self.page.route('**/landing-page-status?**', status)
@@ -217,6 +225,11 @@ class DashboardBrowserTests(WorkspaceFixture):
 
     def select(self, folder):
         self.page.locator('.lead-row').filter(has_text=folder.name).click()
+
+    def open_section(self, section):
+        summary = self.page.locator(f'#{section}:not([open]) > summary')
+        if summary.count():
+            summary.click()
 
     def test_api_settings_can_test_and_replace_keys_without_restart(self):
         import api_settings
@@ -296,6 +309,63 @@ class DashboardBrowserTests(WorkspaceFixture):
         expect(self.page.locator('#build-button')).to_be_disabled()
         self.assertEqual(self.errors, [])
 
+    def test_website_actions_and_preview_are_visible_before_secondary_details(self):
+        from playwright.sync_api import expect
+        self.page.set_viewport_size({'width': 1366, 'height': 768})
+        self.select(self.beta)
+        self.page.evaluate('scrollTo(0,0)')
+        expect(self.page.locator('#lead-notes')).to_be_hidden()
+        expect(self.page.locator('#scan-socials')).to_be_hidden()
+        build = self.page.locator('#build-button').bounding_box()
+        preview = self.page.locator('#preview-canvas').bounding_box()
+        self.assertGreaterEqual(build['y'], 0)
+        self.assertLessEqual(build['y'] + build['height'], 768)
+        self.assertLess(preview['y'], 768 - 100)
+        expect(self.page.locator('#preview-title')).to_have_text('No website yet.')
+        placeholder = self.page.locator('#preview-title').bounding_box()
+        self.assertLess(placeholder['y'] + placeholder['height'], 768)
+        self.page.get_by_role('button', name='Follow-up', exact=True).click()
+        expect(self.page.locator('#lead-notes')).to_be_visible()
+        self.page.locator('#lead-notes').fill('Keep this draft while the panel is collapsed.')
+        self.page.locator('#workflow-section > summary').click()
+        expect(self.page.locator('#lead-notes')).to_be_hidden()
+        expect(self.page.locator('#workflow-save-state')).to_have_text('Unsaved changes')
+        self.page.get_by_role('button', name='Mobile', exact=True).click()
+        self.page.get_by_role('button', name='Follow-up', exact=True).click()
+        expect(self.page.locator('#lead-notes')).to_have_value('Keep this draft while the panel is collapsed.')
+        self.page.get_by_role('button', name='Socials', exact=True).click()
+        expect(self.page.locator('#scan-socials')).to_be_visible()
+        self.page.get_by_role('button', name='Why this lead', exact=True).click()
+        expect(self.page.locator('#selected-reason')).to_be_visible()
+        self.page.set_viewport_size({'width': 390, 'height': 844})
+        self.page.locator('#detail-panel').evaluate('(el)=>el.scrollIntoView({block:"start"})')
+        mobile_build = self.page.locator('#build-button').bounding_box()
+        mobile_preview = self.page.locator('#preview-canvas').bounding_box()
+        self.assertLess(mobile_build['y'] + mobile_build['height'], 600)
+        self.assertLess(mobile_preview['y'], 650)
+        self.assertEqual(self.errors, [])
+
+    def test_advanced_filters_show_active_count_and_clear_together(self):
+        from playwright.sync_api import expect
+        self.select(self.beta)
+        expect(self.page.locator('#website-filter')).to_be_hidden()
+        expect(self.page.locator('#lead-sort')).to_be_hidden()
+        self.open_section('list-filters')
+        self.page.locator('#website-filter').select_option('missing')
+        self.page.locator('[data-priority="HIGH"]').click()
+        expect(self.page.locator('#filter-count')).to_have_text('2')
+        expect(self.page.locator('.lead-row-name')).to_have_text([self.gamma.name])
+        self.page.locator('#list-filters > summary').click()
+        expect(self.page.locator('#filter-count')).to_be_visible()
+        self.open_section('list-filters')
+        self.page.locator('#clear-list-filters').click()
+        expect(self.page.locator('#filter-count')).to_be_hidden()
+        expect(self.page.locator('.lead-row')).to_have_count(4)
+        expect(self.page.locator('#website-filter')).to_have_value('ALL')
+        expect(self.page.locator('[data-priority="ALL"]')).to_have_attribute('aria-pressed', 'true')
+        expect(self.page.locator('#selected-name')).to_have_text(self.beta.name)
+        self.assertEqual(self.errors, [])
+
     def test_followup_summary_filters_badges_and_urgency_sorting(self):
         from datetime import date, timedelta
         from playwright.sync_api import expect
@@ -349,13 +419,388 @@ class DashboardBrowserTests(WorkspaceFixture):
         self.statuses['2'] = {'status': 'error', 'message': 'Reference provider unavailable. Try again.'}
         expect(self.page.locator('#job-error')).to_contain_text('Reference provider unavailable')
         expect(self.page.locator('#build-button')).to_be_enabled()
-        self.page.locator('#website-filter').select_option('failed')
+        self.open_section('list-filters')
+        self.page.locator('#website-filter').select_option('needs_attention')
         expect(self.page.locator('.lead-row')).to_have_count(1)
         expect(self.page.locator('.lead-row')).to_contain_text(self.gamma.name)
+        self.open_section('list-filters')
         self.page.locator('#website-filter').select_option('ALL')
         self.select(self.beta)
         expect(self.page.frame_locator('#preview-frame').locator('h1')).to_have_text(self.beta.name)
         self.assertEqual(len(self.builds), 2)
+        self.assertEqual(self.errors, [])
+
+    def test_social_profiles_show_public_bios_contacts_sources_and_export(self):
+        from playwright.sync_api import expect
+        business_file = self.beta / 'business.json'
+        business = json.loads(business_file.read_text())
+        business.update(email='office@example.test', social_profiles=[{
+            'platform': 'instagram', 'url': 'https://instagram.com/example', 'status': 'public',
+            'source_url': 'https://business.example/contact', 'observed_at': '2026-11-12T00:00:00Z',
+            'details': {'name': 'Example Plumbing', 'description': 'Public plumbing business bio.',
+                        'emails': ['hello@example.test'], 'phones': ['+1 555 0100']}}])
+        business_file.write_text(json.dumps(business))
+        self.enable_list_management()
+        self.select(self.beta)
+        expect(self.page.locator('#contact-links a[href="mailto:office@example.test"]')).to_be_visible()
+        self.open_section('social-section')
+        self.page.locator('#social-results-label').click()
+        expect(self.page.locator('.social-profile summary a')).to_have_attribute('href', 'https://instagram.com/example')
+        self.page.locator('.social-profile summary').click()
+        expect(self.page.locator('.social-profile-body')).to_contain_text('Public plumbing business bio.')
+        expect(self.page.locator('.social-profile-body a[href="mailto:hello@example.test"]')).to_be_visible()
+        expect(self.page.get_by_role('link', name='Discovery source')).to_have_attribute('href', 'https://business.example/contact')
+        self.page.set_viewport_size({'width': 390, 'height': 844})
+        self.assertLessEqual(self.page.locator('html').evaluate('(el)=>el.scrollWidth'), 390)
+        self.page.set_viewport_size({'width': 1440, 'height': 1000})
+        with self.page.expect_download() as download:
+            self.page.locator('#export-button').click()
+        import csv
+        rows = list(csv.DictReader(Path(download.value.path()).read_text(encoding='utf-8-sig').splitlines()))
+        row = next(item for item in rows if item['name'] == self.beta.name)
+        self.assertEqual(row['instagram'], 'https://instagram.com/example')
+        self.assertEqual(json.loads(row['social_profiles'])[0]['details']['emails'], ['hello@example.test'])
+        self.assertEqual(self.errors, [])
+
+    def test_social_scan_survives_selection_reload_and_preserves_unsaved_followup(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        status = {'status': 'running', 'message': 'Checking public Instagram information.'}
+        posts = []
+        def scan(route):
+            posts.append(route.request.post_data_json)
+            route.fulfill(json={'job_id': 'social-scan-test'})
+        self.page.route('**/social-discovery', scan)
+        self.page.route('**/job-status?job_id=social-scan-test', lambda route: route.fulfill(json=status))
+        self.select(self.beta)
+        self.open_section('workflow-section')
+        self.page.locator('#lead-notes').fill('Keep this unsaved call note.')
+        self.open_section('social-section')
+        self.page.locator('#scan-socials').click()
+        expect(self.page.locator('#social-scan-state')).to_have_text('Checking public Instagram information.')
+        expect(self.page.locator('#scan-socials')).to_be_disabled()
+        expect(self.page.locator('#find-button')).to_be_disabled()
+        expect(self.page.locator('#build-button')).to_be_disabled()
+        expect(self.page.locator('#delete-business-button')).to_be_disabled()
+        self.select(self.gamma)
+        expect(self.page.locator('#scan-socials')).to_be_enabled()
+        expect(self.page.locator('#social-scan-state')).not_to_contain_text('Checking public Instagram')
+        self.select(self.beta)
+        self.page.reload()
+        expect(self.page.locator('#selected-name')).to_have_text(self.beta.name)
+        expect(self.page.locator('#social-scan-state')).to_have_text('Checking public Instagram information.')
+        expect(self.page.locator('#lead-notes')).to_have_value('Keep this unsaved call note.')
+        business_file = self.beta / 'business.json'
+        business = json.loads(business_file.read_text())
+        business.update(instagram='https://instagram.com/example', social_profiles=[{
+            'platform': 'instagram', 'url': 'https://instagram.com/example', 'status': 'blocked',
+            'note': 'Automated access is not allowed by this site.', 'details': {}}])
+        business_file.write_text(json.dumps(business))
+        status.update(status='complete', message='Found 1 linked profile; access limited.')
+        expect(self.page.locator('#scan-socials')).to_be_enabled()
+        expect(self.page.locator('#social-results-label')).to_have_text('View 1 social profile')
+        expect(self.page.locator('#lead-notes')).to_have_value('Keep this unsaved call note.')
+        expect(self.page.locator('#workflow-save-state')).to_have_text('Unsaved changes')
+        expect(self.page.locator('#find-button')).to_be_enabled()
+        expect(self.page.locator('#build-button')).to_be_enabled()
+        self.assertEqual(posts, [{'priority': 'MEDIUM', 'name': self.beta.name}])
+        self.assertEqual(self.errors, [])
+
+    def test_failed_social_submission_can_retry_and_recover_an_accepted_scan(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        self.select(self.beta)
+        self.page.route('**/social-discovery', lambda route: route.fulfill(status=503, json={'error': 'Social scanner unavailable.'}), times=1)
+        self.open_section('social-section')
+        self.page.locator('#scan-socials').click()
+        expect(self.page.locator('#social-scan-state')).to_contain_text('Social scanner unavailable.')
+        expect(self.page.locator('#scan-socials')).to_be_enabled()
+        def accepted(route):
+            with dashboard.jobs_lock:
+                dashboard.jobs['recovered-social'] = {'kind': 'social', 'status': 'running', 'priority': 'MEDIUM',
+                    'client_id': self.beta.name, 'client': str(self.beta), 'message': 'Recovered social scan.'}
+            route.abort('failed')
+        status = {'status': 'running', 'message': 'Recovered social scan.'}
+        self.page.route('**/social-discovery', accepted)
+        self.page.route('**/job-status?job_id=recovered-social', lambda route: route.fulfill(json=status))
+        self.open_section('social-section')
+        self.page.locator('#scan-socials').click()
+        expect(self.page.locator('#social-scan-state')).to_have_text('Recovered social scan.')
+        expect(self.page.locator('#scan-socials')).to_be_disabled()
+        status.update(status='error', message='The public page could not be reached. Try again.')
+        expect(self.page.locator('#social-scan-state')).to_contain_text('The public page could not be reached.')
+        expect(self.page.locator('#scan-socials')).to_be_enabled()
+        self.assertEqual(self.errors, [])
+
+    def test_followup_drafts_survive_navigation_device_refresh_and_reload(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        self.select(self.beta)
+        self.open_section('workflow-section')
+        self.page.locator('#lead-workflow-status').select_option('FOLLOW_UP')
+        self.open_section('workflow-section')
+        self.page.locator('#lead-follow-up-date').fill('2026-11-18')
+        self.open_section('workflow-section')
+        self.page.locator('#lead-notes').fill('Ask the owner about the redesigned homepage.')
+        expect(self.page.locator('#workflow-save-state')).to_have_text('Unsaved changes')
+        self.page.get_by_role('button', name='Mobile', exact=True).click()
+        expect(self.page.locator('#lead-notes')).to_have_value('Ask the owner about the redesigned homepage.')
+
+        self.select(self.gamma)
+        expect(self.page.locator('#lead-notes')).to_have_value('')
+        self.open_section('workflow-section')
+        self.page.locator('#lead-notes').fill('Roofing lead has a separate draft.')
+        self.select(self.beta)
+        expect(self.page.locator('#lead-workflow-status')).to_have_value('FOLLOW_UP')
+        expect(self.page.locator('#lead-follow-up-date')).to_have_value('2026-11-18')
+        expect(self.page.locator('#lead-notes')).to_have_value('Ask the owner about the redesigned homepage.')
+        self.page.locator('#refresh-button').click()
+        expect(self.page.locator('#refresh-button')).to_be_enabled()
+        expect(self.page.locator('#lead-notes')).to_have_value('Ask the owner about the redesigned homepage.')
+
+        self.page.reload()
+        expect(self.page.locator('#selected-name')).to_have_text(self.beta.name)
+        expect(self.page.locator('#lead-workflow-status')).to_have_value('FOLLOW_UP')
+        expect(self.page.locator('#lead-follow-up-date')).to_have_value('2026-11-18')
+        expect(self.page.locator('#lead-notes')).to_have_value('Ask the owner about the redesigned homepage.')
+        expect(self.page.locator('#workflow-save-state')).to_have_text('Unsaved changes')
+        self.select(self.gamma)
+        expect(self.page.locator('#lead-notes')).to_have_value('Roofing lead has a separate draft.')
+        self.assertFalse((self.beta / 'lead_workflow.json').exists())
+        self.assertFalse((self.gamma / 'lead_workflow.json').exists())
+        self.assertEqual(self.errors, [])
+
+    def test_followup_drafts_survive_build_and_search_progress_updates(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        self.select(self.beta)
+        self.page.locator('#build-button').click()
+        expect(self.page.locator('#website-state')).to_have_text('Building website')
+        self.open_section('workflow-section')
+        self.page.locator('#lead-notes').fill('Keep this draft while providers are working.')
+        self.statuses['1'] = {'status': 'running', 'message': 'Checking the website layout.'}
+        expect(self.page.locator('#build-message')).to_have_text('Checking the website layout.')
+        expect(self.page.locator('#lead-notes')).to_have_value('Keep this draft while providers are working.')
+        self.statuses['1'] = {'status': 'error', 'message': 'Build paused for this test.'}
+        expect(self.page.locator('#job-error')).to_contain_text('Build paused for this test.')
+        expect(self.page.locator('#lead-notes')).to_have_value('Keep this draft while providers are working.')
+
+        self.page.route('**/generate', lambda route: route.fulfill(json={'job_id': 'draft-search'}))
+        self.page.route('**/job-status?job_id=draft-search', lambda route: route.fulfill(json={
+            'status': 'running', 'phase': 'Scoring businesses', 'message': 'Checking new prospects.', 'percent': 25}))
+        self.page.locator('#find-button').click()
+        self.page.locator('#niche').fill('Plumbing')
+        self.page.locator('#area').fill('Test City')
+        self.page.locator('#search-submit').click()
+        expect(self.page.locator('#search-message')).to_have_text('Checking new prospects.')
+        expect(self.page.locator('#lead-notes')).to_have_value('Keep this draft while providers are working.')
+        expect(self.page.locator('#workflow-save-state')).to_have_text('Unsaved changes')
+        self.assertEqual(self.errors, [])
+
+    def test_followup_delayed_save_feedback_stays_with_its_business(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        held = []
+        self.page.route('**/lead-workflow', lambda route: held.append(route))
+        self.select(self.beta)
+        self.open_section('workflow-section')
+        self.page.locator('#lead-workflow-status').select_option('FOLLOW_UP')
+        self.open_section('workflow-section')
+        self.page.locator('#lead-follow-up-date').fill('2026-11-18')
+        self.open_section('workflow-section')
+        self.page.locator('#lead-notes').fill('Save only the plumbing follow-up.')
+        with self.page.expect_request('**/lead-workflow'):
+            self.open_section('workflow-section')
+            self.page.locator('#save-lead-workflow').click()
+        expect(self.page.locator('#workflow-save-state')).to_have_text('Saving…')
+        self.select(self.gamma)
+        expect(self.page.locator('#workflow-save-state')).to_have_text('')
+        self.open_section('workflow-section')
+        self.page.locator('#lead-notes').fill('Roofing notes are still unsaved.')
+
+        response = self.client.post('/lead-workflow', json=held[0].request.post_data_json,
+                                    headers={'X-Workspace-Token': dashboard.settings_token})
+        self.assertEqual(response.status_code, 200)
+        held[0].fulfill(json=response.get_json())
+        expect(self.page.locator('.lead-row').filter(has_text=self.beta.name).locator('.workflow-chip')).to_have_text('Follow-up')
+        expect(self.page.locator('#selected-name')).to_have_text(self.gamma.name)
+        expect(self.page.locator('#lead-notes')).to_have_value('Roofing notes are still unsaved.')
+        expect(self.page.locator('#workflow-save-state')).to_have_text('Unsaved changes')
+        self.select(self.beta)
+        expect(self.page.locator('#workflow-save-state')).to_have_text('Saved')
+        expect(self.page.locator('#lead-notes')).to_have_value('Save only the plumbing follow-up.')
+        expect(self.page.locator('#lead-workflow-status')).to_have_value('FOLLOW_UP')
+        expect(self.page.locator('#lead-follow-up-date')).to_have_value('2026-11-18')
+        self.assertFalse((self.gamma / 'lead_workflow.json').exists())
+        self.assertEqual(len(held), 1)
+        self.assertEqual(self.errors, [])
+
+    def test_followup_save_preserves_newer_edits_and_blocks_duplicate_submissions(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        held = []
+        self.page.route('**/lead-workflow', lambda route: held.append(route))
+        self.select(self.beta)
+        self.open_section('workflow-section')
+        self.page.locator('#lead-notes').fill('First version sent to the workspace.')
+        with self.page.expect_request('**/lead-workflow'):
+            self.open_section('workflow-section')
+            self.page.locator('#save-lead-workflow').click()
+        self.page.get_by_role('button', name='Mobile', exact=True).click()
+        expect(self.page.locator('#save-lead-workflow')).to_be_disabled()
+        expect(self.page.locator('#save-lead-workflow')).to_have_text('Saving…')
+        self.open_section('workflow-section')
+        self.page.locator('#lead-notes').fill('Newer edits made while saving.')
+        expect(self.page.locator('#save-lead-workflow')).to_be_disabled()
+        self.assertEqual(len(held), 1)
+
+        response = self.client.post('/lead-workflow', json=held[0].request.post_data_json,
+                                    headers={'X-Workspace-Token': dashboard.settings_token})
+        held[0].fulfill(json=response.get_json())
+        expect(self.page.locator('#save-lead-workflow')).to_be_enabled()
+        expect(self.page.locator('#lead-notes')).to_have_value('Newer edits made while saving.')
+        expect(self.page.locator('#workflow-save-state')).to_have_text('Unsaved changes')
+        with self.page.expect_request('**/lead-workflow'):
+            self.open_section('workflow-section')
+            self.page.locator('#save-lead-workflow').click()
+        self.assertEqual(held[1].request.post_data_json['notes'], 'Newer edits made while saving.')
+        stale_leads = self.client.get('/leads').get_json()
+        held_leads = []
+        self.page.route('**/leads', lambda route: held_leads.append(route), times=1)
+        with self.page.expect_request('**/leads'):
+            self.page.locator('#refresh-button').click()
+        expect(self.page.locator('#save-lead-workflow')).to_be_disabled()
+        response = self.client.post('/lead-workflow', json=held[1].request.post_data_json,
+                                    headers={'X-Workspace-Token': dashboard.settings_token})
+        held[1].fulfill(json=response.get_json())
+        expect(self.page.locator('#workflow-save-state')).to_have_text('Saved')
+        held_leads[0].fulfill(json=stale_leads)
+        expect(self.page.locator('#refresh-button')).to_be_enabled()
+        expect(self.page.locator('#lead-notes')).to_have_value('Newer edits made while saving.')
+        expect(self.page.locator('#workflow-save-state')).to_have_text('Saved')
+        self.page.reload()
+        expect(self.page.locator('#lead-notes')).to_have_value('Newer edits made while saving.')
+        self.assertEqual(json.loads((self.beta / 'lead_workflow.json').read_text())['notes'],
+                         'Newer edits made while saving.')
+        self.assertEqual(len(held), 2)
+        self.assertEqual(self.errors, [])
+
+    def test_followup_save_failure_preserves_owner_draft_and_can_be_retried(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        held = []
+        self.page.route('**/lead-workflow', lambda route: held.append(route))
+        self.select(self.beta)
+        self.open_section('workflow-section')
+        self.page.locator('#lead-notes').fill('Keep my call notes after a failed save.')
+        with self.page.expect_request('**/lead-workflow'):
+            self.open_section('workflow-section')
+            self.page.locator('#save-lead-workflow').click()
+        self.select(self.gamma)
+        held[0].fulfill(status=503, json={'error': 'Workspace temporarily unavailable.'})
+        expect(self.page.locator('#workflow-save-state')).to_have_text('')
+        self.select(self.beta)
+        expect(self.page.locator('#lead-notes')).to_have_value('Keep my call notes after a failed save.')
+        expect(self.page.locator('#workflow-save-state')).to_contain_text('Workspace temporarily unavailable.')
+        expect(self.page.locator('#save-lead-workflow')).to_be_enabled()
+        self.page.get_by_role('button', name='Mobile', exact=True).click()
+        expect(self.page.locator('#lead-notes')).to_have_value('Keep my call notes after a failed save.')
+        expect(self.page.locator('#workflow-save-state')).to_contain_text('Workspace temporarily unavailable.')
+        with self.page.expect_request('**/lead-workflow'):
+            self.open_section('workflow-section')
+            self.page.locator('#save-lead-workflow').click()
+        response = self.client.post('/lead-workflow', json=held[1].request.post_data_json,
+                                    headers={'X-Workspace-Token': dashboard.settings_token})
+        held[1].fulfill(json=response.get_json())
+        expect(self.page.locator('#workflow-save-state')).to_have_text('Saved')
+        expect(self.page.locator('#lead-notes')).to_have_value('Keep my call notes after a failed save.')
+        self.assertEqual(json.loads((self.beta / 'lead_workflow.json').read_text())['notes'],
+                         'Keep my call notes after a failed save.')
+        self.assertEqual(self.errors, [])
+
+    def test_followup_cleared_draft_survives_reload_after_a_lost_save_reply(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        held = []
+        self.page.route('**/lead-workflow', lambda route: held.append(route))
+        self.select(self.beta)
+        self.open_section('workflow-section')
+        self.page.locator('#lead-notes').fill('The server accepts this earlier version.')
+        with self.page.expect_request('**/lead-workflow'):
+            self.open_section('workflow-section')
+            self.page.locator('#save-lead-workflow').click()
+        self.open_section('workflow-section')
+        self.page.locator('#lead-notes').fill('')
+        response = self.client.post('/lead-workflow', json=held[0].request.post_data_json,
+                                    headers={'X-Workspace-Token': dashboard.settings_token})
+        self.assertEqual(response.status_code, 200)
+        self.page.reload()
+        expect(self.page.locator('#selected-name')).to_have_text(self.beta.name)
+        expect(self.page.locator('#lead-notes')).to_have_value('')
+        expect(self.page.locator('#workflow-save-state')).to_have_text('Unsaved changes')
+        expect(self.page.locator('#save-lead-workflow')).to_be_enabled()
+        self.assertEqual(json.loads((self.beta / 'lead_workflow.json').read_text())['notes'],
+                         'The server accepts this earlier version.')
+        self.assertEqual(self.errors, [])
+
+    def test_followup_draft_survives_reconnecting_after_initial_session_failure(self):
+        from playwright.sync_api import expect
+        self.page.unroute('**/session')
+        requests = []
+        def session(route):
+            requests.append(route)
+            if len(requests) == 1:
+                route.fulfill(status=503, json={'error': 'Session temporarily unavailable.'})
+            else:
+                data = self.client.get('/session').get_json()
+                data.update(workspace_id='test-workspace', capabilities={
+                    'search_configured': True, 'website_configured': True})
+                route.fulfill(json=data)
+        self.page.route('**/session', session)
+        self.page.reload()
+        expect(self.page.locator('.lead-row')).to_have_count(4)
+        self.select(self.beta)
+        self.open_section('workflow-section')
+        self.page.locator('#lead-notes').fill('Draft written before session recovery.')
+        expect(self.page.locator('#save-lead-workflow')).to_be_disabled()
+        self.page.locator('#refresh-button').click()
+        expect(self.page.locator('#save-lead-workflow')).to_be_enabled()
+        expect(self.page.locator('#lead-notes')).to_have_value('Draft written before session recovery.')
+        expect(self.page.locator('#workflow-save-state')).to_have_text('Unsaved changes')
+        self.assertFalse((self.beta / 'lead_workflow.json').exists())
+        self.assertEqual(self.errors, [])
+
+    def test_followup_cleared_draft_survives_reload_before_an_uncertain_save_commits(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        held = []
+        self.page.route('**/lead-workflow', lambda route: held.append(route))
+        self.select(self.beta)
+        self.open_section('workflow-section')
+        self.page.locator('#lead-notes').fill('Earlier text whose save outcome is unknown.')
+        with self.page.expect_request('**/lead-workflow'):
+            self.open_section('workflow-section')
+            self.page.locator('#save-lead-workflow').click()
+        payload = held[0].request.post_data_json
+        self.open_section('workflow-section')
+        self.page.locator('#lead-notes').fill('')
+        held[0].abort('failed')
+        self.page.reload()
+        expect(self.page.locator('#selected-name')).to_have_text(self.beta.name)
+        expect(self.page.locator('#lead-notes')).to_have_value('')
+
+        response = self.client.post('/lead-workflow', json=payload,
+                                    headers={'X-Workspace-Token': dashboard.settings_token})
+        self.assertEqual(response.status_code, 200)
+        self.page.locator('#refresh-button').click()
+        expect(self.page.locator('#refresh-button')).to_be_enabled()
+        expect(self.page.locator('#lead-notes')).to_have_value('')
+        expect(self.page.locator('#workflow-save-state')).to_have_text('Unsaved changes')
+        self.page.unroute('**/lead-workflow')
+        self.open_section('workflow-section')
+        self.page.locator('#save-lead-workflow').click()
+        expect(self.page.locator('#workflow-save-state')).to_have_text('Saved')
+        self.assertEqual(json.loads((self.beta / 'lead_workflow.json').read_text())['notes'], '')
         self.assertEqual(self.errors, [])
 
     def test_redesign_preserves_copy_rejection_recovers_and_rebuild_requires_choice(self):
@@ -363,7 +808,7 @@ class DashboardBrowserTests(WorkspaceFixture):
         self.select(self.alpha)
         self.page.route('**/generate-landing-page', lambda route: route.fulfill(status=503, json={'error': 'Build service unavailable.'}), times=1)
         self.page.locator('#redesign-button').click()
-        expect(self.page.locator('#job-error')).to_have_text('Build service unavailable.')
+        expect(self.page.locator('#job-error')).to_contain_text('Build service unavailable.')
         expect(self.page.locator('#redesign-button')).to_be_enabled()
         self.page.locator('#redesign-button').click()
         expect(self.page.locator('#website-state')).to_have_text('Building website')
@@ -484,6 +929,55 @@ class DashboardBrowserTests(WorkspaceFixture):
         self.page.locator('#refresh-button').click()
         expect(self.page.locator('#clear-list-button')).to_be_enabled()
 
+    def test_draft_qa_review_download_and_changed_files_stay_consistent(self):
+        from playwright.sync_api import expect
+        from test_website_status import passing_report
+        self.enable_list_management()
+        self.select(self.alpha)
+        expect(self.page.locator('#website-state')).to_have_text('Draft — QA not verified')
+        expect(self.page.locator('#saved-count')).to_have_text('4 saved · 0 QA passed · 0 reviewed')
+        with self.page.expect_download() as draft:
+            self.page.locator('#download-button').click()
+        self.assertIn('DRAFT-website.zip', draft.value.suggested_filename)
+        with patch.object(dashboard, 'validate', side_effect=passing_report):
+            self.page.locator('#check-website').click()
+            expect(self.page.locator('#website-state')).to_have_text('QA passed — review pending')
+        expect(self.page.locator('#saved-count')).to_have_text('4 saved · 1 QA passed · 0 reviewed')
+        self.page.locator('#review-website').click()
+        expect(self.page.locator('#review-dialog')).to_be_visible()
+        self.page.locator('#confirm-review').click()
+        expect(self.page.locator('#website-state')).to_have_text('Reviewed for delivery')
+        expect(self.page.locator('#saved-count')).to_have_text('4 saved · 1 QA passed · 1 reviewed')
+        with self.page.expect_download() as reviewed:
+            self.page.locator('#download-button').click()
+        self.assertIn('reviewed-website.zip', reviewed.value.suggested_filename)
+        self.page.reload()
+        expect(self.page.locator('#website-state')).to_have_text('Reviewed for delivery')
+        (self.alpha / 'website' / 'styles.css').write_text('body{color:black}')
+        self.page.locator('#refresh-button').click()
+        expect(self.page.locator('#website-state')).to_have_text('Draft — QA not verified')
+        expect(self.page.locator('#saved-count')).to_have_text('4 saved · 0 QA passed · 0 reviewed')
+        expect(self.page.locator('#download-button')).to_have_text('Download draft ZIP')
+        expect(self.page.locator('#review-website')).to_be_hidden()
+        self.assertEqual(self.errors, [])
+
+    def test_failed_recheck_is_retryable_and_keeps_selected_business(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        self.select(self.alpha)
+        self.page.route('**/validate-website', lambda route: route.fulfill(status=500, json={'error': 'QA could not finish. Retry the check.'}), times=1)
+        self.page.locator('#check-website').click()
+        expect(self.page.locator('#website-action-error')).to_contain_text('QA could not finish')
+        expect(self.page.locator('#selected-name')).to_have_text(self.alpha.name)
+        expect(self.page.locator('#check-website')).to_be_enabled()
+        expect(self.page.locator('#download-button')).to_be_enabled()
+        self.page.locator('#check-website').click()
+        expect(self.page.locator('#website-state')).to_have_text('Needs attention')
+        expect(self.page.locator('#website-action-error')).to_be_hidden()
+        self.open_section('qa-card')
+        expect(self.page.locator('#qa-badge')).to_have_text('Review')
+        self.assertEqual(self.errors, [])
+
     def test_list_sort_orders_filters_and_saved_preference(self):
         from playwright.sync_api import expect
         for folder, score in [(self.alpha, 80), (self.beta, 95), (self.gamma, 80), (self.low, 10)]:
@@ -501,9 +995,11 @@ class DashboardBrowserTests(WorkspaceFixture):
         }
         for sort, folders in orders.items():
             with self.subTest(sort=sort):
+                self.open_section('list-filters')
                 self.page.locator('#lead-sort').select_option(sort)
                 expect(self.page.locator('.lead-row-name')).to_have_text([folder.name for folder in folders])
         self.page.locator('[data-priority="HIGH"]').click()
+        self.open_section('list-filters')
         self.page.locator('#lead-sort').select_option('score-desc')
         expect(self.page.locator('.lead-row-name')).to_have_text([self.alpha.name, self.gamma.name])
         self.page.locator('#lead-search').fill('Roofing')
@@ -571,7 +1067,7 @@ class DashboardBrowserTests(WorkspaceFixture):
         self.page.locator('#confirm-delete').click()
         expect(self.page.locator('.lead-row')).to_have_count(0)
         expect(self.page.locator('#business-list')).to_contain_text('Your next client starts here.')
-        expect(self.page.locator('#saved-count')).to_have_text('0 saved · 0 websites ready')
+        expect(self.page.locator('#saved-count')).to_have_text('0 saved · 0 QA passed · 0 reviewed')
         expect(self.page.locator('#clear-list-button')).to_be_disabled()
         self.page.reload()
         expect(self.page.locator('.lead-row')).to_have_count(0)
@@ -843,4 +1339,49 @@ class DashboardBrowserTests(WorkspaceFixture):
         expect(self.page.locator('#search-message')).to_contain_text('search session has ended')
         expect(self.page.locator('#find-button')).to_be_enabled()
         expect(self.page.locator('#clear-list-button')).to_be_enabled()
+        self.assertEqual(self.errors, [])
+
+
+    def test_build_stage_elapsed_and_failure_recovery_are_visible(self):
+        from playwright.sync_api import expect
+        self.select(self.beta)
+        self.page.locator('#build-button').click()
+        self.statuses['1'] = {'status': 'running', 'phase': 'copy', 'message': 'Writing business copy.'}
+        expect(self.page.locator('#build-stage')).to_contain_text('Copy')
+        expect(self.page.locator('#build-stage')).to_contain_text('elapsed')
+        expect(self.page.locator('#step-qa')).not_to_have_class('build-step complete')
+        self.statuses['1'] = {'status': 'error', 'phase': 'copy', 'message': 'API key rejected.', 'finished_at': 9999999999}
+        expect(self.page.locator('#job-error')).to_contain_text('Change or test the API key')
+        expect(self.page.locator('#job-settings-button')).to_be_visible()
+        expect(self.page.locator('#build-button')).to_be_enabled()
+        self.assertEqual(self.errors, [])
+
+
+    def test_narrow_export_and_clear_menu_keyboard_navigation(self):
+        from playwright.sync_api import expect
+        self.enable_list_management()
+        for width in (1024, 768, 390, 320):
+            self.page.set_viewport_size({'width': width, 'height': 900})
+            expect(self.page.locator('#export-button')).to_be_visible()
+            self.assertLessEqual(self.page.locator('html').evaluate('(el)=>el.scrollWidth'), width)
+        with self.page.expect_download() as exported:
+            self.page.locator('#export-button').click()
+        self.assertTrue(exported.value.suggested_filename.endswith('.csv'))
+        trigger = self.page.locator('#clear-list-button')
+        trigger.focus()
+        self.page.keyboard.press('ArrowDown')
+        expect(self.page.locator('[data-clear-priority="HIGH"]')).to_be_focused()
+        self.page.keyboard.press('End')
+        expect(self.page.locator('[data-clear-priority="ALL"]')).to_be_focused()
+        self.page.keyboard.press('Home')
+        expect(self.page.locator('[data-clear-priority="HIGH"]')).to_be_focused()
+        self.page.keyboard.press('Escape')
+        expect(self.page.locator('#clear-menu-panel')).to_be_hidden()
+        expect(trigger).to_be_focused()
+        self.page.keyboard.press('ArrowDown')
+        self.page.keyboard.press('Enter')
+        expect(self.page.locator('#delete-dialog')).to_be_visible()
+        self.page.keyboard.press('Escape')
+        expect(self.page.locator('#delete-dialog')).to_be_hidden()
+        expect(trigger).to_be_focused()
         self.assertEqual(self.errors, [])

@@ -171,6 +171,8 @@ def _content_slots(html, key):
     for name, selector in selectors.items():
         fragments = []
         for original in soup.select(selector):
+            if name == 'eyebrow' and original.find_parent(class_='location-box'):
+                continue
             node = deepcopy(original)
             # Keep functional button classes; discard the former layout wrappers.
             for element in [node, *node.find_all(True)]:

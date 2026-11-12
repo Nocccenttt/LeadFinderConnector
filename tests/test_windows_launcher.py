@@ -65,6 +65,11 @@ class WindowsLauncherTests(unittest.TestCase):
                 shutil.copytree(REPO / name, cls.app / name)
             shutil.copy2(REPO / '.env.example', cls.app / '.env')
             subprocess.run([sys.executable, '-m', 'venv', '--system-site-packages', str(cls.app / '.venv')], check=True, capture_output=True)
+            # This fixture inherits global packages; Waitress can be installed
+            # only in the development venv. Supply it without network access.
+            import waitress
+            shutil.copytree(Path(waitress.__file__).parent,
+                            cls.app / '.venv' / 'Lib' / 'site-packages' / 'waitress')
 
     @classmethod
     def tearDownClass(cls):

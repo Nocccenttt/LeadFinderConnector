@@ -7,7 +7,7 @@ from io import BytesIO, StringIO
 from pathlib import Path
 from threading import Lock, Thread
 from time import time
-from datetime import date
+from datetime import date, datetime, timezone
 from uuid import uuid4
 from urllib.parse import urlparse
 
@@ -17,16 +17,26 @@ from flask import Flask, jsonify, render_template, request, send_file, send_from
 from pipeline_runner import run_pipeline
 from seo_lead_finder_prospecting_batch import run as run_lead_finder
 from api_settings import key_status, save_keys, test_key, safe_job_error
+from social_discovery import crawl_socials, legacy_social_fields, saved_profiles
+from website_status import website_status
+from website_validator import validate
+from status_manager import save_status
+from delivery_manager import create_delivery_json
+from job_store import save_jobs, load_jobs
+from build_progress import observe_build
+from release_info import VERSION
 
 load_dotenv(Path(__file__).resolve().parent / '.env', override=True)
 
 app = Flask(__name__)
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 APP_ROOT = Path(__file__).resolve().parent
 ROOT = Path(__file__).resolve().parent
 HANDOFFS = ROOT / "codex_handoffs"
 
-jobs = {}
+jobs = load_jobs(ROOT)
 jobs_lock = Lock()
+workflow_write_lock = Lock()
 settings_token = secrets.token_urlsafe(32)
 
 
@@ -51,60 +61,16 @@ def isolate_generated_previews(response):
     return response
 
 
-def preview_info(folder):
-    website = folder / "website"
-    missing = []
-    for name in ("index.html", "styles.css", "script.js"):
-        asset = website / name
-        try:
-            valid = (website.resolve().parent == folder.resolve() and asset.is_file()
-                     and asset.resolve().parent == website.resolve() and asset.stat().st_size > 0)
-        except (OSError, RuntimeError):
-            # A build can replace files while this read-only status request runs.
-            valid = False
-        if not valid:
-            missing.append(name)
-    available = not missing
-    state = "ready" if available else "incomplete" if website.exists() else "missing"
-    message = {
-        "ready": "Website ready to preview.",
-        "incomplete": "The website files are incomplete. Build it again to create a complete preview.",
-        "missing": "No website has been built for this business yet.",
-    }[state]
-    qa = {"status": "NOT RUN", "checks_passed": 0, "checks_total": 0, "issues": []}
-    try:
-        report = json.loads((folder / "quality_report.json").read_text(encoding="utf-8"))
-        if isinstance(report, dict):
-            qa["status"] = str(report.get("status") or "NOT RUN")
-            checks = report.get("checks") if isinstance(report.get("checks"), dict) else {}
-            for value in checks.values():
-                check_status = value.get("status") if isinstance(value, dict) else value
-                if check_status:
-                    qa["checks_total"] += 1
-                    if check_status == "PASS":
-                        qa["checks_passed"] += 1
-                if isinstance(value, dict):
-                    for issue in value.get("issues", []) if isinstance(value.get("issues"), list) else []:
-                        if issue and len(qa["issues"]) < 5:
-                            qa["issues"].append(str(issue))
-            for warning in report.get("warnings", []) if isinstance(report.get("warnings"), list) else []:
-                if warning and len(qa["issues"]) < 5:
-                    qa["issues"].append(str(warning))
-    except (OSError, ValueError, TypeError, AttributeError):
-        pass
-    for filename in ("STATUS.json", "quality_report.json"):
-        try:
-            status = json.loads((folder / filename).read_text(encoding="utf-8")).get("status")
-            if status in ("FAILED", "NEEDS REVIEW"):
-                state = "failed"
-                message = "The last build needs attention. Review the quality checks or retry the build."
-        except (OSError, ValueError, AttributeError):
-            continue
-    return {
-        "available": available, "state": state, "message": message, "missing_assets": missing, "qa": qa,
-        "preview_url": url_for("demo_named", priority=folder.parent.name, name=folder.name) if available else "",
-        "download_url": url_for("download_demo_named", priority=folder.parent.name, name=folder.name) if available else "",
-    }
+def preview_info(folder, building=None):
+    if building is None:
+        with jobs_lock:
+            building = any(job.get('kind') == 'website' and job.get('status') in ('queued', 'running') and
+                           job.get('client') == str(folder) for job in jobs.values())
+    info = website_status(folder, building=building)
+    return {**info,
+            'preview_url': url_for('demo_named', priority=folder.parent.name, name=folder.name) if info['available'] else '',
+            'download_url': url_for('download_demo_named', priority=folder.parent.name, name=folder.name, kind='draft') if info['can_download_draft'] else '',
+            'approved_download_url': url_for('download_demo_named', priority=folder.parent.name, name=folder.name, kind='reviewed') if info['approved'] else ''}
 
 WORKFLOW_STATUSES = ("NEW", "CONTACTED", "FOLLOW_UP", "INTERESTED", "CLOSED")
 
@@ -127,10 +93,14 @@ def read_lead_workflow(folder):
 
 
 def write_lead_workflow(folder, workflow):
-    output = folder / "lead_workflow.json"
-    temporary = folder / ".lead_workflow.tmp"
-    temporary.write_text(json.dumps(workflow, indent=2, ensure_ascii=False), encoding="utf-8")
-    temporary.replace(output)
+    with workflow_write_lock:
+        output = folder / "lead_workflow.json"
+        temporary = folder / f".lead-workflow-{uuid4().hex}.tmp"
+        try:
+            temporary.write_text(json.dumps(workflow, indent=2, ensure_ascii=False), encoding="utf-8")
+            temporary.replace(output)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def discover_leads():
@@ -165,19 +135,30 @@ def discover_leads():
                 "address": business.get("address", ""),
                 "phone": business.get("phone", ""),
                 "website": website,
+                "email": business.get('email', ''),
+                "email_found_on": business.get('email_found_on') or business.get('email_source_url', ''),
+                **legacy_social_fields(saved_profiles(business)),
+                "social_profiles": saved_profiles(business),
+                "social_scan": business.get('social_scan', {}) if isinstance(business.get('social_scan'), dict) else {},
                 "priority": priority,
                 "score": score,
                 "reason": business.get("opportunity_reasons", ""),
                 "category": business.get("business_type") or business.get("niche") or "",
                 "can_generate": resolve_client(priority, client_folder.name) is not None,
                 "preview_state":preview["state"],
+                "website_status": preview,
+                "website_state": preview['state'],
+                "files_available": preview['available'],
+                "qa_status": preview['qa']['status'],
+                "delivery_review": 'APPROVED' if preview['approved'] else 'PENDING' if preview['qa_passed'] else 'NOT_READY',
                 "preview_message":preview["message"],
                 "qa": preview["qa"],
                 "workflow": workflow,
                 "folder": str(client_folder.relative_to(ROOT)),
-                "demo_ready": ready,
+                "demo_ready": ready,  # Legacy preview-availability alias; delivery readiness is in website_status.
                 "demo_url": url_for("demo_named", priority=priority, name=client_folder.name) if ready else "",
-                "download_url": url_for("download_demo_named", priority=priority, name=client_folder.name) if ready else "",
+                "download_url": preview["download_url"],
+                "approved_download_url": preview["approved_download_url"],
             })
     leads.sort(key=lambda lead: (0 if lead["priority"] == "HIGH" else 1 if lead["priority"] == "MEDIUM" else 2, -int(lead["score"] or 0)))
     return leads
@@ -190,6 +171,7 @@ def update_job(job_id, event=None, **changes):
         if event:
             job.setdefault("log", []).append(event)
             job["log"] = job["log"][-40:]
+        save_jobs(ROOT, jobs)
 
 
 def make_progress_callback(job_id):
@@ -279,10 +261,15 @@ def session_state():
     with jobs_lock:
         active = [{"job_id":job_id, **{key:job.get(key) for key in ("kind","status","message","priority","client_id","started_at")}}
                   for job_id,job in jobs.items() if job.get("status") in ("queued","running")]
+        interrupted = [{"job_id": key, **value} for key, value in jobs.items() if value.get('interrupted') and not any(
+            other.get('kind') == value.get('kind') and other.get('priority') == value.get('priority') and
+            other.get('client_id') == value.get('client_id') and other.get('started_at', 0) > value.get('started_at', 0)
+            for other in jobs.values())]
     response = jsonify({"workspace_id":hashlib.sha256(str(HANDOFFS.resolve()).encode()).hexdigest()[:12],
                     "workspace_token": settings_token,
                     "capabilities":{"search_configured":bool(os.getenv("GOOGLE_MAPS_API_KEY")),"website_configured":bool(os.getenv("DEEPSEEK_API_KEY"))},
-                    "active_jobs":active})
+                    "active_jobs":active, "interrupted_jobs":interrupted,
+                    "version":VERSION, "data_folder":str(ROOT.resolve())})
     response.headers['Cache-Control'] = 'no-store'
     return response
 
@@ -355,11 +342,12 @@ def generate():
     with jobs_lock:
         if any(job.get("kind") == "leads" and job.get("status") in ("queued", "running") for job in jobs.values()):
             return jsonify({"error": "Lead generation is already running."}), 409
-        if any(job.get("kind") == "website" and job.get("status") in ("queued", "running") for job in jobs.values()):
-            return jsonify({"error": "Wait for the current website builds to finish before starting a business search."}), 409
+        if any(job.get("kind") in ("website", "social") and job.get("status") in ("queued", "running") for job in jobs.values()):
+            return jsonify({"error": "Wait for the current website builds or social scans to finish before starting a business search."}), 409
         jobs[job_id] = {"status": "queued", "message": "Queued...", "log": [], "percent": 0, "high": 0, "medium": 0, "low": 0}
         jobs[job_id]["kind"] = "leads"
         jobs[job_id]["started_at"] = time()
+        save_jobs(ROOT, jobs)
     Thread(target=run_generation, args=(job_id, niche, area, max_results), daemon=True).start()
     return jsonify({"job_id": job_id})
 
@@ -381,7 +369,8 @@ def leads():
         "high": sum(1 for lead in items if lead["priority"] == "HIGH"),
         "medium": sum(1 for lead in items if lead["priority"] == "MEDIUM"),
         "low": sum(1 for lead in items if lead["priority"] == "LOW"),
-        "ready":sum(1 for lead in items if lead["demo_ready"]),
+        "ready":sum(1 for lead in items if lead["website_status"]["qa_passed"]),
+        "approved":sum(1 for lead in items if lead["website_status"]["approved"]),
         "total": len(items),
         "leads": items,
     })
@@ -534,20 +523,158 @@ def resolve_lead_folder(priority, name):
     return None
 
 
+def website_request_folder(data):
+    if not isinstance(data, dict):
+        return None, (jsonify({'error': 'Choose a saved business.'}), 400)
+    if not secrets.compare_digest(request.headers.get('X-Workspace-Token', '').encode('utf-8'), settings_token.encode('utf-8')):
+        return None, (jsonify({'error': 'Refresh the workspace before changing website review.'}), 403)
+    folder = resolve_lead_folder(data.get('priority'), data.get('name'))
+    if folder is None or not (folder / 'business.json').is_file():
+        return None, (jsonify({'error': 'This saved business is no longer available.'}), 404)
+    try:
+        if any((folder / name).resolve().parent != folder for name in ('business.json', 'quality_report.json', 'STATUS.json', 'DELIVERY.json')):
+            return None, (jsonify({'error': 'Saved website metadata is linked elsewhere.'}), 409)
+    except (OSError, RuntimeError):
+        return None, (jsonify({'error': 'Saved website metadata is unavailable.'}), 409)
+    if any(job.get('status') in ('queued', 'running') and (job.get('kind') == 'leads' or job.get('client') == str(folder)) for job in jobs.values()):
+        return None, (jsonify({'error': 'Wait for active work on this business to finish.'}), 409)
+    return folder, None
+
+
+@app.post('/validate-website')
+def validate_website():
+    with jobs_lock:
+        folder, error = website_request_folder(request.get_json(silent=True))
+        if error:
+            return error
+        before = preview_info(folder, building=False)
+        if not before['can_download_draft']:
+            return jsonify({'error': 'Complete website files are required before QA can run.'}), 409
+        try:
+            (folder / 'DELIVERY.json').unlink(missing_ok=True)
+            report = json.loads(Path(validate(folder)).read_text(encoding='utf-8'))
+            save_status(folder, 'PASS' if report.get('status') == 'PASS' else 'NEEDS REVIEW')
+            if report.get('status') == 'PASS':
+                create_delivery_json(folder)
+            return jsonify(preview_info(folder, building=False))
+        except (OSError, ValueError, RuntimeError):
+            app.logger.exception('Website QA recheck failed.')
+            return jsonify({'error': 'QA could not finish. Your website files were kept; retry the check.'}), 500
+
+
+@app.post('/delivery-review')
+def delivery_review():
+    data = request.get_json(silent=True)
+    with jobs_lock:
+        folder, error = website_request_folder(data)
+        if error:
+            return error
+        if data.get('action') not in ('approve', 'revoke'):
+            return jsonify({'error': 'Choose approve or revoke.'}), 400
+        output = folder / 'DELIVERY.json'
+        if data['action'] == 'revoke':
+            try:
+                output.unlink(missing_ok=True)
+            except OSError:
+                return jsonify({'error': 'Delivery review could not be removed. Check folder permissions and retry.'}), 500
+            return jsonify(preview_info(folder, building=False))
+        info = preview_info(folder, building=False)
+        if not info['can_review'] or data.get('fingerprint') != info['fingerprint'] or data.get('qa_report_hash') != info['qa_report_hash']:
+            return jsonify({'error': 'The website or QA result changed. Refresh, recheck QA, and review the current draft.'}), 409
+        reviewed = {'client': folder.name, 'pipeline_stage': 'REVIEWED_FOR_DELIVERY', 'website_status': 'PASS',
+                    'qa_status': 'PASS', 'approval_status': 'APPROVED', 'website_fingerprint': info['fingerprint'],
+                    'qa_report_hash': info['qa_report_hash'], 'reviewed_at': datetime.now(timezone.utc).isoformat()}
+        temporary = folder / f'.delivery-review-{uuid4().hex}.tmp'
+        try:
+            temporary.write_text(json.dumps(reviewed, indent=2), encoding='utf-8')
+            temporary.replace(output)
+        except OSError:
+            return jsonify({'error': 'Delivery review could not be saved. Check folder permissions and try again.'}), 500
+        finally:
+            temporary.unlink(missing_ok=True)
+        return jsonify(preview_info(folder, building=False))
+
+
+def run_social_discovery(job_id, folder):
+    try:
+        update_job(job_id, status='running', message='Finding linked social profiles and public business details…')
+        business_file = folder / 'business.json'
+        if business_file.resolve().parent != folder:
+            raise ValueError('The saved business file is linked elsewhere.')
+        business = json.loads(business_file.read_text(encoding='utf-8'))
+        report = crawl_socials(business, progress=lambda message: update_job(job_id, message=message))
+        # Re-read before writing so unrelated enrichment made during the scan is retained.
+        if resolve_lead_folder(folder.parent.name, folder.name) != folder or business_file.resolve().parent != folder:
+            raise ValueError('The saved business location changed during the scan.')
+        current = json.loads(business_file.read_text(encoding='utf-8'))
+        current.update(social_profiles=report['profiles'], social_scan={key: value for key, value in report.items() if key != 'profiles'})
+        current.update(legacy_social_fields(report['profiles']))
+        for name in ('AI_HANDOFF.json', 'WEBSITE_GENERATOR_PROMPT.md'):
+            if (folder / name).resolve().parent != folder:
+                raise ValueError('The saved handoff is linked elsewhere.')
+        updates = [(business_file, current)]
+        handoff_file = folder / 'AI_HANDOFF.json'
+        if handoff_file.is_file():
+            handoff = json.loads(handoff_file.read_text(encoding='utf-8'))
+            presence = handoff.get('verified_online_presence', {})
+            handoff['verified_online_presence'] = {
+                **(presence if isinstance(presence, dict) else {}), **legacy_social_fields(report['profiles']),
+                'social_profiles': report['profiles'], 'social_scan': current['social_scan'],
+                'social_profile_note': 'Profiles are linked-source observations. Review business identity and public bios before using them as verified business claims.',
+            }
+            updates.append((handoff_file, handoff))
+        for target, value in updates:
+            temporary = target.with_name(f'.{target.name}-social-{job_id}.tmp')
+            try:
+                temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
+                temporary.replace(target)
+            finally:
+                temporary.unlink(missing_ok=True)
+        update_job(job_id, status='complete', message=report['note'])
+    except Exception:
+        app.logger.exception('Social profile discovery failed.')
+        update_job(job_id, status='error', message='Could not complete the social scan. Saved business data is still available; refresh and try again.')
+
+
+@app.post('/social-discovery')
+def social_discovery():
+    if not secrets.compare_digest(request.headers.get('X-Workspace-Token', '').encode('utf-8'), settings_token.encode('utf-8')):
+        return jsonify({'error': 'Refresh the workspace before scanning social profiles.'}), 403
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'Choose a saved business to scan.'}), 400
+    job_id = uuid4().hex
+    with jobs_lock:
+        folder = resolve_lead_folder(data.get('priority'), data.get('name'))
+        if folder is None or not (folder / 'business.json').is_file():
+            return jsonify({'error': 'This saved business is no longer available.'}), 404
+        if any(job.get('status') in ('queued', 'running') and
+               (job.get('kind') == 'leads' or job.get('client') == str(folder)) for job in jobs.values()):
+            return jsonify({'error': 'Wait for the active search or work on this business to finish.'}), 409
+        if sum(job.get('kind') == 'social' and job.get('status') in ('queued', 'running') for job in jobs.values()) >= 2:
+            return jsonify({'error': 'Two social scans are already running. Wait for one to finish.'}), 409
+        jobs[job_id] = {'kind': 'social', 'status': 'queued', 'message': 'Queued social scan…',
+                        'client': str(folder), 'priority': folder.parent.name, 'client_id': folder.name, 'started_at': time()}
+        save_jobs(ROOT, jobs)
+    Thread(target=run_social_discovery, args=(job_id, folder), daemon=True).start()
+    return jsonify({'job_id': job_id})
+
+
 def run_landing_page(job_id, client_folder, preserve_content=False):
     try:
         update_job(job_id, status="running", started_at=time(),message="Researching, writing and building your website. This can take a few minutes.")
-        status = run_pipeline(client_folder, preserve_content=True) if preserve_content else run_pipeline(client_folder)
+        with observe_build(lambda phase, message: update_job(job_id, phase=phase, message=message, phase_started_at=time())):
+            status = run_pipeline(client_folder, preserve_content=True) if preserve_content else run_pipeline(client_folder)
         if status != "PASS":
             raise RuntimeError("Website validation failed; review quality_report.json.")
         with app.test_request_context():
-            preview = preview_info(client_folder)
+            preview = preview_info(client_folder, building=False)
         if not preview["available"]:
             raise RuntimeError(preview["message"])
-        update_job(job_id, status="complete", message="Landing page ready.",
+        update_job(job_id, status="complete", finished_at=time(), phase="complete", message="Website draft built. Check QA and review before delivery.",
                    preview_url=preview["preview_url"], download_url=preview["download_url"])
     except Exception as error:
-        update_job(job_id, status="error", message=safe_job_error(error, 'deepseek'))
+        update_job(job_id, status="error", finished_at=time(), message=safe_job_error(error, 'deepseek'))
 
 
 @app.post("/generate-landing-page")
@@ -564,9 +691,12 @@ def generate_landing_page():
             return jsonify({"error": "Wait for the current business search to finish before building a website."}), 409
         if any(job.get("client") == str(client_folder) and job.get("status") in ("queued", "running") for job in jobs.values()):
             return jsonify({"error": "A landing page is already being generated for this lead."}), 409
+        if sum(job.get('kind') == 'website' and job.get('status') in ('queued', 'running') for job in jobs.values()) >= 2:
+            return jsonify({'error': 'Two website builds are already running. Wait for one to finish before starting another.'}), 409
         jobs[job_id] = {"status": "queued", "message": "Queued website build...", "kind":"website",
                         "priority":client_folder.parent.name,"client_id":client_folder.name,"started_at":time()}
         jobs[job_id]["client"] = str(client_folder)
+        save_jobs(ROOT, jobs)
     Thread(target=run_landing_page, args=(job_id, client_folder, data.get("preserve_content") is True), daemon=True).start()
     return jsonify({"job_id": job_id})
 
@@ -627,31 +757,42 @@ def demo_named(priority, name):
 def download_demo_named(priority, name):
     import zipfile
 
-    folder = get_demo_folder(priority, name)
-    if not folder:
-        return "Landing page not found.", 404
-    website = folder / "website"
-    required = ["index.html", "styles.css", "script.js"]
-    missing = [item for item in required if not (website / item).is_file()]
-    if missing:
-        return "Landing page package is incomplete. Missing: " + ", ".join(missing), 500
-
-    # Each request owns its archive; simultaneous downloads cannot overwrite it.
-    package = BytesIO()
-    with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for file in website.rglob("*"):
-            if file.is_file() and website.resolve() in file.resolve().parents:
-                archive.write(file, file.relative_to(website))
+    folder = resolve_lead_folder(priority, name)
+    if folder is None:
+        return jsonify({'error': 'Website not found.'}), 404
+    kind = request.args.get('kind', 'draft')
+    if kind not in ('draft', 'reviewed'):
+        return jsonify({'error': 'Choose a draft or reviewed download.'}), 400
+    with jobs_lock:
+        busy = any(job.get('status') in ('queued', 'running') and
+                   (job.get('kind') == 'leads' or job.get('kind') == 'website' and job.get('client') == str(folder)) for job in jobs.values())
+        info = preview_info(folder, building=busy)
+        if not info['can_download_draft']:
+            return jsonify({'error': 'Complete, stable website files are required. Wait for the build or retry it.'}), 409
+        if kind == 'reviewed' and not info['approved']:
+            return jsonify({'error': 'These files have not passed QA and delivery review. Download a draft or review the current website.'}), 409
+        package = BytesIO()
+        with zipfile.ZipFile(package, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+            for file in (folder / 'website').rglob('*'):
+                if file.is_file():
+                    archive.write(file, file.relative_to(folder / 'website'))
+        after = preview_info(folder, building=False)
+        if after['fingerprint'] != info['fingerprint'] or kind == 'reviewed' and not after['approved']:
+            return jsonify({'error': 'Website files changed while preparing the ZIP. Refresh and retry.'}), 409
     package.seek(0)
-    return send_file(package, as_attachment=True,
-                     download_name=f"{folder.name}-landing-page.zip", mimetype="application/zip")
+    label = 'reviewed' if kind == 'reviewed' else 'DRAFT'
+    return send_file(package, as_attachment=True, download_name=f'{folder.name}-{label}-website.zip', mimetype='application/zip')
 
 
 @app.get("/export")
 def export():
     leads = discover_leads()
-    fields = ["name", "address", "phone", "website", "priority", "score", "reason"]
+    fields = ["name", "address", "phone", "email", "email_found_on", "website", "priority", "score", "reason",
+              "website_state", "qa_status", "delivery_review",
+              "facebook", "instagram", "linkedin", "other_socials", "social_profiles", "social_scan"]
     def text_cell(value):
+        if isinstance(value, dict) or isinstance(value, list) and any(isinstance(item, dict) for item in value):
+            value = json.dumps(value, ensure_ascii=False)
         if isinstance(value, list):
             value = '; '.join(str(item) for item in value)
         text = str(value) if value is not None else ''
@@ -680,4 +821,5 @@ if __name__ == "__main__":
     print()
     print("Dashboard file:", Path(__file__).resolve())
     print("Workspace UI: modern minimal")
-    app.run(host="127.0.0.1", port=port, debug=False)
+    from dashboard_server import serve_dashboard
+    serve_dashboard(app, port)

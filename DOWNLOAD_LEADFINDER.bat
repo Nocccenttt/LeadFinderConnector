@@ -41,7 +41,7 @@ try {
     New-Item -ItemType Directory -Force -Path $staging | Out-Null
     $archive = Join-Path $staging 'LeadFinder.zip'
     Write-Host '[1/5] Downloading LeadFinder...'
-    $sourceRef = if ($env:LEADFINDER_SOURCE_REF) { $env:LEADFINDER_SOURCE_REF } else { 'refs/heads/FinalFinal' }
+    $sourceRef = if ($env:LEADFINDER_SOURCE_REF) { $env:LEADFINDER_SOURCE_REF } else { 'refs/heads/ui/final-polish' }
     if ($sourceRef -notmatch '^[a-zA-Z0-9/_-]+$') { throw 'The application version reference is invalid.' }
     Invoke-WebRequest -UseBasicParsing -Uri "https://codeload.github.com/Nocccenttt/LeadFinderConnector/zip/$sourceRef" -OutFile $archive -TimeoutSec 300
     Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $staging 'source')

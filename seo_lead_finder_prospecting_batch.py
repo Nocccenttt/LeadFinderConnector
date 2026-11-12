@@ -20,7 +20,7 @@ import hashlib
 import random
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlparse
 from pathlib import Path
 
@@ -28,17 +28,13 @@ import requests
 from bs4 import BeautifulSoup
 
 from ai_handoff import build_ai_handoff
+from social_discovery import crawl_socials, extract_profiles, legacy_social_fields, merge_profiles, saved_profiles, social_url
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17 Safari/605.1.15",
 ]
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
-SOCIAL_DOMAINS = {
-    "facebook.com": "facebook", "instagram.com": "instagram",
-    "linkedin.com": "linkedin", "youtube.com": "youtube",
-    "tiktok.com": "tiktok", "x.com": "x", "twitter.com": "x",
-}
 CONTACT_PATHS = ["", "/contact", "/contact-us", "/contactus", "/about", "/about-us", "/get-in-touch"]
 
 
@@ -61,18 +57,12 @@ class Lead:
     opportunity: str = ""
     reason: str = ""
     opportunity_reasons: str = ""
+    social_profiles: list = field(default_factory=list)
+    social_scan: dict = field(default_factory=dict)
 
 
 def headers():
     return {"User-Agent": random.choice(USER_AGENTS), "Accept-Language": "en-US,en;q=0.9"}
-
-
-def root_domain(url):
-    try:
-        host = urlparse(url).netloc.lower()
-        return host[4:] if host.startswith("www.") else host
-    except Exception:
-        return ""
 
 
 def fetch(url, timeout=10):
@@ -157,9 +147,18 @@ def inspect_website(website):
         "status": "unknown", "email": "", "email_source_url": "",
         "facebook": "", "instagram": "", "linkedin": "", "other_socials": [],
         "mobile_meta": False, "cta": False, "contact_info": False,
+        "social_profiles": [],
     }
     if not website:
         result["status"] = "no website"
+        return result
+    direct_social = social_url(website)
+    if direct_social:
+        result['status'] = 'social profile only'
+        result['social_profiles'] = [{'platform': direct_social[0], 'url': direct_social[1],
+                                      'source_url': website, 'status': 'not_checked', 'details': {}}]
+        result.update(legacy_social_fields(result['social_profiles']))
+        result['other_socials'] = result['other_socials'].split('; ') if result['other_socials'] else []
         return result
 
     root = website
@@ -203,19 +202,11 @@ def inspect_website(website):
                 if match:
                     result["email"], result["email_source_url"] = match.group(0), page_url
 
-        for link in soup.select("a[href]"):
-            href = link.get("href", "")
-            if not href.startswith("http"):
-                continue
-            domain = root_domain(href)
-            for social_domain, social_name in SOCIAL_DOMAINS.items():
-                if domain == social_domain or domain.endswith("." + social_domain):
-                    if social_name in ("facebook", "instagram", "linkedin") and not result[social_name]:
-                        result[social_name] = href
-                    elif social_name not in ("facebook", "instagram", "linkedin"):
-                        result["other_socials"].append(href)
+        source = response.url if isinstance(response.url, str) and response.url else page_url
+        result['social_profiles'] = merge_profiles(result['social_profiles'], extract_profiles(response.text, source))
 
-    result["other_socials"] = list(dict.fromkeys(result["other_socials"]))
+    result.update(legacy_social_fields(result['social_profiles']))
+    result['other_socials'] = result['other_socials'].split('; ') if result['other_socials'] else []
     return result
 
 
@@ -223,6 +214,8 @@ def score_lead(lead, site):
     """Classify a lead consistently from its verified website condition."""
     if not lead.website:
         return 100, "HIGH", "no website", "NO WEBSITE"
+    if site['status'] == 'social profile only':
+        return 100, 'HIGH', 'social profile only; no dedicated website', 'NO WEBSITE'
 
     if site["status"] == "broken":
         return 90, "HIGH", "broken website", "BROKEN WEBSITE"
@@ -264,6 +257,12 @@ def enrich_lead(lead):
     lead.instagram = site["instagram"]
     lead.linkedin = site["linkedin"]
     lead.other_socials = "; ".join(site["other_socials"])
+    lead.social_profiles = site.get('social_profiles', [])
+    if lead.social_profiles:
+        scan = crawl_socials({'website': lead.website, 'social_profiles': lead.social_profiles},
+                             crawl_website=False, budget_seconds=15)
+        lead.social_profiles = scan.pop('profiles')
+        lead.social_scan = scan
     lead.opportunity_score, lead.opportunity, lead.reason, lead.website_quality = score_lead(lead, site)
 
 
@@ -326,6 +325,8 @@ def write_codex_handoff(lead, base_dir, niche="local business"):
                 break
     business_dir.mkdir(parents=True, exist_ok=True)
 
+    profiles = merge_profiles(saved_profiles(existing), lead.social_profiles or saved_profiles({
+        'facebook': lead.facebook, 'instagram': lead.instagram, 'linkedin': lead.linkedin, 'other_socials': lead.other_socials}))
     data = {
         # A new search updates discovered facts while retaining manually verified
         # services, SEO settings, design references and other saved enrichment.
@@ -343,10 +344,9 @@ def write_codex_handoff(lead, base_dir, niche="local business"):
         "phone": lead.phone,
         "email": lead.email,
         "email_found_on": lead.email_source_url,
-        "facebook": lead.facebook,
-        "instagram": lead.instagram,
-        "linkedin": lead.linkedin,
-        "other_socials": lead.other_socials,
+        **legacy_social_fields(profiles),
+        "social_profiles": profiles,
+        "social_scan": lead.social_scan or existing.get('social_scan', {}),
         "maps_position": lead.maps_position,
     }
 
@@ -423,14 +423,15 @@ def write_opportunity_csv(leads, path, priority):
             "business_name", "maps_position", "address", "phone", "website",
             "website_status", "facebook", "instagram", "linkedin", "other_socials",
             "email", "email_found_on", "opportunity_score", "opportunity",
-            "opportunity_reasons"
+            "opportunity_reasons", "social_profiles", "social_scan"
         ])
         for lead in selected:
             writer.writerow([
                 lead.name, lead.maps_position, lead.address, lead.phone, lead.website,
                 lead.website_status, lead.facebook, lead.instagram, lead.linkedin,
                 lead.other_socials, lead.email, lead.email_source_url,
-                lead.opportunity_score, lead.opportunity, lead.reason
+                lead.opportunity_score, lead.opportunity, lead.reason,
+                json.dumps(lead.social_profiles, ensure_ascii=False), json.dumps(lead.social_scan, ensure_ascii=False)
             ])
 
 
@@ -577,14 +578,14 @@ def run(niche, area, output, max_results, output_dir='outputs', codex_dir='codex
         writer.writerow([
             "business_name", "maps_position", "address", "phone", "website", "website_status",
             "facebook", "instagram", "linkedin", "other_socials", "email", "email_found_on",
-            "opportunity_score", "opportunity", "opportunity_reasons",
+            "opportunity_score", "opportunity", "opportunity_reasons", "social_profiles", "social_scan",
         ])
         for lead in leads:
             writer.writerow([
                 lead.name, lead.maps_position, lead.address, lead.phone, lead.website,
                 lead.website_status, lead.facebook, lead.instagram, lead.linkedin, lead.other_socials,
                 lead.email, lead.email_source_url, lead.opportunity_score, lead.opportunity,
-                lead.reason,
+                lead.reason, json.dumps(lead.social_profiles, ensure_ascii=False), json.dumps(lead.social_scan, ensure_ascii=False),
             ])
     progress(
         phase="Complete",

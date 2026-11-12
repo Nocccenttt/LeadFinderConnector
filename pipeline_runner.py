@@ -9,12 +9,16 @@ from website_validator import validate
 from status_manager import save_status
 from delivery_manager import create_delivery_json
 from sales_generator import generate_sales_package
+from build_recovery import recover_build
+from build_progress import stage
 
 
 def run_pipeline(client_folder, preserve_content=False):
     client_folder = Path(client_folder).resolve()
     if not client_folder.is_dir():
         raise FileNotFoundError(f"Client folder not found: {client_folder}")
+    recover_build(client_folder)
+    stage('preparing', 'Preparing the build and backing up the current website.')
     save_status(client_folder, "RUNNING")
     (client_folder / "DELIVERY.json").unlink(missing_ok=True)
     backup = None
@@ -38,6 +42,8 @@ def run_pipeline(client_folder, preserve_content=False):
             shutil.copytree(website, backup / 'website', symlinks=True, ignore=reject_junctions)
         if approved_copy.exists():
             shutil.copy2(approved_copy, backup / 'GENERATED_COPY.json', follow_symlinks=False)
+        (backup / 'checkpoint.json').write_text(json.dumps({'website': website.exists(),
+                                                          'GENERATED_COPY.json': approved_copy.exists()}), encoding='utf-8')
         result = None
         try:
             result = _run_pipeline(client_folder, preserve_content=preserve_content)
@@ -115,6 +121,7 @@ def _run_pipeline(client_folder, preserve_content=False):
     print("\n[check] Running quality validation...")
 
 
+    stage('validation', 'Checking website files, page structure, SEO, and factual-claim risks.')
     report_path = validate(client_folder)
     report_path = Path(report_path)
 
@@ -156,6 +163,7 @@ def _run_pipeline(client_folder, preserve_content=False):
     # ----------------------------
 
     if status == "PASS":
+        stage('packaging', 'Preparing the draft delivery files and sales package.')
 
         delivery = create_delivery_json(
             client_folder
