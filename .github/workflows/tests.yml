@@ -1,0 +1,55 @@
+name: LeadFinder regression tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, FinalFinal, "codex/**"]
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install runtime dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Install browser for rendered checks
+        run: python -m playwright install --with-deps chromium
+      - name: Run regression tests
+        env:
+          RUN_BROWSER_TESTS: "1"
+        run: python -m unittest discover -s tests -v
+
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build and install the distributable ZIP
+        shell: pwsh
+        run: |
+          python tools/build_windows_zip.py
+          $download = Join-Path $env:RUNNER_TEMP 'LeadFinder download'
+          Expand-Archive -LiteralPath outputs/distribution/LeadFinder-Windows.zip -DestinationPath $download
+          $download = Join-Path $download 'LeadFinder'
+          "GOOGLE_MAPS_API_KEY=test-install-maps`nDEEPSEEK_API_KEY=test-install-model`nPEXELS_API_KEY=" | Set-Content (Join-Path $download '.env')
+          $env:LEADFINDER_INSTALL_ROOT = Join-Path $env:RUNNER_TEMP 'LeadFinder installed'
+          $env:LEADFINDER_SHORTCUT_FOLDER = Join-Path $env:RUNNER_TEMP 'LeadFinder shortcuts'
+          $env:LEADFINDER_NO_LAUNCH = '1'
+          $env:LEADFINDER_SKIP_KEY_PROMPT = '1'
+          $env:LEADFINDER_TEST_BAT = Join-Path $download 'INSTALL_LEADFINDER.bat'
+          cmd.exe /d /s /c '""%LEADFINDER_TEST_BAT%""'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify launches, stop, errors and offline reuse
+        shell: pwsh
+        run: |
+          $env:LEADFINDER_TEST_APP = Join-Path $env:RUNNER_TEMP 'LeadFinder installed/app'
+          $python = Join-Path $env:LEADFINDER_TEST_APP '.venv/Scripts/python.exe'
+          & $python -m unittest discover -s tests -p test_windows_launcher.py -v

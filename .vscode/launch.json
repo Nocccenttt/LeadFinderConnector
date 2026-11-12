@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "LeadFinder",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "program": "${workspaceFolder}/preview_dashboard.py",
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "justMyCode": true,
+      "env": {
+        "LEADFINDER_PORT": "3000",
+        "PLAYWRIGHT_BROWSERS_PATH": "${workspaceFolder}/../browsers",
+        "PYTHONUTF8": "1"
+      },
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "Running on (http://127\\.0\\.0\\.1:[0-9]+)",
+        "uriFormat": "%s"
+      }
+    }
+  ]
+}
